@@ -14,11 +14,10 @@
       const main = clear(document.getElementById('main'));
       const r = this.route;
       try {
-        if (r.view === 'people') Views.people(main);
-        else if (r.view === 'project') {
+        if (r.view === 'project') {
           const pr = Store.db.projects.find((p) => p.id === r.id);
           if (!pr) { this.route = { view: 'projects' }; return this.render(); }
-          Views.project(main, pr, r.tab || 'list');
+          Views.project(main, pr, r.tab);
         } else if (r.view === 'settings') Views.settings(main);
         else Views.projects(main);
       } catch (e) {
@@ -44,7 +43,6 @@
       nav.appendChild(item(pr.name, '•', r.view === 'project' && r.id === pr.id, () => App.go('project', { id: pr.id }), ' nav-sub'));
     }
     nav.appendChild(el('div', { class: 'nav-sep' }, 'כללי'));
-    nav.appendChild(item('רשימת אנשים', '👥', r.view === 'people', () => App.go('people')));
     nav.appendChild(item('הגדרות וגיבוי', '⚙️', r.view === 'settings', () => App.go('settings')));
   }
 
@@ -90,7 +88,9 @@
     const file = e.dataTransfer && e.dataTransfer.files[0];
     if (!file) return;
     if (!/\.(xlsx|xls|csv|ods|pdf)$/i.test(file.name)) { toast('אפשר לגרור רק קובץ אקסל, CSV או PDF'); return; }
-    Views.importDialog({ file: { name: file.name, data: new Uint8Array(await file.arrayBuffer()) } });
+    const pr = App.route.view === 'project' && Store.db.projects.find((p) => p.id === App.route.id);
+    if (!pr) { toast('קודם פותחים פרויקט, ואז גוררים אליו את הקובץ'); return; }
+    Views.importDialog(pr, { file: { name: file.name, data: new Uint8Array(await file.arrayBuffer()) } });
   });
 
   window.addEventListener('beforeunload', () => { Store.flush(); });

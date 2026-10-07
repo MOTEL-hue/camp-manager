@@ -195,20 +195,7 @@
     },
   };
 
-  // השלמת שדות שנוספו בגרסאות מאוחרות יותר, כדי שקובץ ישן ייפתח בלי שגיאות.
-  function migrate(db) {
-    const base = Logic.emptyDb();
-    db.settings = Object.assign({}, base.settings, db.settings || {});
-    db.columns = db.columns || [];
-    db.people = db.people || [];
-    db.projects = db.projects || [];
-    for (const p of db.people) p.custom = p.custom || {};
-    for (const pr of db.projects) {
-      const np = Logic.newProject(pr.name, pr.kind);
-      for (const k of Object.keys(np)) if (pr[k] === undefined) pr[k] = np[k];
-      pr.pricing = Object.assign({ mode: 'none', flat: 0, groups: {} }, pr.pricing);
-    }
-  }
+  const migrate = Logic.migrate;
 
   window.UI = { el, clear, toast, modal, confirmBox, promptBox, field, select, today, fmtDate, kpi, pill, Store, migrate };
 })();

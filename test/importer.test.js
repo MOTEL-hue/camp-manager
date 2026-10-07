@@ -41,7 +41,7 @@ test('בלי שורת כותרת: עמודה ראשונה שם פרטי, שני�
   assert.deepStrictEqual(ppl.map((p) => p.firstName + ' ' + p.lastName), ['רחל כהן', 'שרה לוי']);
 });
 
-test('מיזוג: שם כפול באותו קובץ נשמר כשני אנשים, ייבוא חוזר לא מכפיל ומשלים שדות', () => {
+test('מיזוג: שם כפול באותו קובץ נשמר כשני אנשים, וייבוא חוזר לא מכפיל אף אחד ומשלים שדות', () => {
   const a = I.analyze(ROWS);
   const mapping = a.columns.map((c) => c.target);
   const existing = [];
@@ -53,7 +53,8 @@ test('מיזוג: שם כפול באותו קובץ נשמר כשני אנשים
   const again = I.rowsToPeople(a, mapping, { 4: 'c4', 5: 'c5', 7: 'c7' });
   again[2].email = 'x@y.com';
   r = I.merge(existing, again);
-  assert.strictEqual(existing.length, 4, 'הרחל השנייה מהקובץ שוב נחשבת כפילות בתוך הקובץ');
+  assert.strictEqual(existing.length, 3, 'ייבוא חוזר לא מוסיף את הרחל השנייה שוב');
+  assert.deepStrictEqual([r.added, r.updated, r.same], [0, 1, 2]);
   assert.strictEqual(existing[2].address, 'כתובת שהוקלדה ידנית', 'לא דורסים');
   assert.strictEqual(existing[2].email, 'x@y.com', 'משלימים חסר');
 });
@@ -70,4 +71,26 @@ test('PDF: פריטים לשורות ותאים מימין לשמאל', () => {
 
 test('היפוך עברית שנשמרה הפוך ב-PDF', () => {
   assert.strictEqual(I.reverseHebrew('ןהכ לחר'), 'רחל כהן');
+});
+
+test('העתקת אנשים מפרויקט אחר: עמודות לפי שם, נוצרות כשחסרות, ומיזוג בלי כפילויות', () => {
+  const src = [
+    { id: 's1', firstName: 'רחל', lastName: 'כהן', cls: 'א', momPhone: '052', custom: { a: 'בוטנים', b: 'V' } },
+    { id: 's2', firstName: 'שרה', lastName: 'לוי', cls: 'ב', custom: {} },
+  ];
+  const srcCols = [{ id: 'a', name: 'אלרגיות', type: 'text' }, { id: 'b', name: 'אישור', type: 'check' }];
+  const dest = [{ id: 'x', name: 'אלרגיות', type: 'text' }];
+  const out = I.copyPeople(src, srcCols, dest, true);
+  assert.strictEqual(dest.length, 2, 'נוצרה עמודת "אישור"');
+  const ishur = dest.find((c) => c.name === 'אישור');
+  assert.deepStrictEqual(out[0].person.custom, { x: 'בוטנים', [ishur.id]: 'V' });
+  assert.strictEqual(out[0].srcId, 's1');
+  assert.strictEqual(out[0].person.id, undefined, 'מזהה חדש נקבע במיזוג, לא מועתק');
+  const people = [{ id: 'p', firstName: 'רחל', lastName: 'כהן', cls: 'א', custom: {} }];
+  const r = I.merge(people, out.map((o) => o.person));
+  assert.deepStrictEqual([r.added, r.updated], [1, 1]);
+  assert.strictEqual(people[0].momPhone, '052');
+
+  const noCols = I.copyPeople(src, srcCols, [], false);
+  assert.deepStrictEqual(noCols[0].person.custom, {});
 });

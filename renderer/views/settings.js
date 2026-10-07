@@ -43,12 +43,12 @@
     let data;
     try {
       data = JSON.parse(new TextDecoder().decode(f.data));
-      if (!Array.isArray(data.people) || !Array.isArray(data.projects)) throw new Error('הקובץ לא נראה כמו גיבוי של התוכנה');
+      if (!Array.isArray(data.projects)) throw new Error('הקובץ לא נראה כמו גיבוי של התוכנה');
     } catch (e) {
       toast('לא ניתן לקרוא את הקובץ: ' + e.message);
       return;
     }
-    if (!(await confirmBox('שחזור', `לשחזר מהגיבוי (${data.people.length} אנשים, ${data.projects.length} פרויקטים)? הנתונים הנוכחיים יוחלפו. אפשר לבטל עם Ctrl+Z.`, 'שחזר'))) return;
+    if (!(await confirmBox('שחזור', `לשחזר מהגיבוי (${data.projects.length} פרויקטים)? הנתונים הנוכחיים יוחלפו. אפשר לבטל עם Ctrl+Z.`, 'שחזר'))) return;
     UI.migrate(data);
     Store.db = data;
     App.changed();

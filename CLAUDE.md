@@ -7,19 +7,22 @@
 
 | קובץ | תפקיד |
 |---|---|
-| `main.js` | חלון, שמירת הנתונים (`db.json` בתיקיית המשתמש + גיבוי יומי), דיאלוגי קבצים, הדפסה, עדכון אוטומטי |
+| `main.js` | חלון, שמירת הנתונים (`db.json` בתיקיית המשתמש, או ליד הקובץ בגרסה הניידת, + גיבוי יומי), דיאלוגי קבצים, הדפסה, עדכון אוטומטי |
 | `preload.js` | הגשר היחיד בין הממשק למערכת (`window.api`) |
 | `renderer/logic.js` | **כל החישובים** (לתשלום, יתרה, משפחות, סיכומים). טהור, נבדק ב-node |
 | `renderer/importer.js` | זיהוי עמודות מאקסל/PDF ומיזוג לרשימה. טהור, נבדק ב-node |
 | `renderer/ui.js` | בניית אלמנטים (`el`), חלונות, `Store` (שמירה + ביטול פעולה) |
 | `renderer/views/*.js` | המסכים |
 
-- הנתונים הם אובייקט JSON אחד (`Store.db`): `people`, `columns` (עמודות מותאמות), `projects`
-  (כל פרויקט: `pricing`, `products`, `marks`, `enrollments` לפי מזהה אדם, `payments`, `expenses`).
+- הנתונים הם אובייקט JSON אחד (`Store.db`): `settings` ו-`projects`. לכל פרויקט רשימת אנשים משלו:
+  `people`, `columns` (עמודות מותאמות), `hiddenFields`, ובנוסף `pricing`, `products`, `marks`,
+  `enrollments` (לפי מזהה אדם), `payments`, `expenses`. העתקה בין פרויקטים: `Importer.copyPeople`.
+- `Logic.migrate` מעדכן קבצים ישנים (כולל המעבר מרשימה כללית לרשימה לכל פרויקט).
 - אחרי כל שינוי ב-`Store.db` קוראים ל-`Store.commit()` (שומר ומאפשר Ctrl+Z), או ל-`App.changed()`
   כשצריך לצייר את המסך מחדש.
-- שדה חדש בנתונים: להוסיף ערך ברירת מחדל ב-`Logic.emptyDb`/`Logic.newProject`, ו-`UI.migrate`
+- שדה חדש בנתונים: להוסיף ערך ברירת מחדל ב-`Logic.emptyDb`/`Logic.newProject`, ו-`Logic.migrate`
   ישלים אותו בקבצים ישנים.
+- הכול בעברית, כולל קובץ ההתקנה (`nsis.language` = 1037).
 - טקסט מהמשתמש או מקבצים נכנס רק דרך `el(...)` (textContent), לא דרך innerHTML.
 
 ## בדיקות

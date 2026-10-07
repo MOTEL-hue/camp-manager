@@ -20,20 +20,20 @@
       main.appendChild(el('div', { class: 'card empty' },
         el('div', { class: 'big' }, showArchive ? '🗂️' : '📁'),
         el('h2', null, showArchive ? 'אין פרויקטים בארכיון' : 'עוד אין פרויקטים'),
-        showArchive ? null : el('p', null, 'פרויקט הוא למשל "קייטנת קיץ", "קייטנת אחרי סוכות" או "מכירת ספרים". לכל פרויקט מחיר, רישום, תשלומים והוצאות משלו, על אותה רשימת אנשים.'),
+        showArchive ? null : el('p', null, 'פרויקט הוא למשל "קייטנת קיץ", "קייטנת אחרי סוכות" או "מכירת ספרים". לכל פרויקט רשימת אנשים, מחיר, רישום, תשלומים והוצאות משלו.'),
         showArchive ? null : el('button', { class: 'btn primary', onclick: () => newProjectDialog() }, '➕ פרויקט ראשון')));
       return;
     }
     const cards = el('div', { class: 'project-cards' });
     for (const pr of list) {
-      const s = Logic.summary(pr, db.people);
+      const s = Logic.summary(pr, pr.people);
       const pct = s.due > 0 ? Math.min(100, Math.round((s.paid / s.due) * 100)) : 0;
       cards.appendChild(el('div', { class: 'card project-card', onclick: () => App.go('project', { id: pr.id }) },
         el('div', { class: 'kind' }, KIND_LABEL[pr.kind] || ''),
         el('h2', { style: { margin: '4px 0 2px' } }, pr.name),
         el('div', { class: 'muted small' }, 'נוצר ' + UI.fmtDate(pr.createdAt)),
         el('div', { class: 'progress' }, el('div', { style: { width: pct + '%' } })),
-        el('div', { class: 'small' }, `${s.participants} משתתפים · שולם ${Logic.money(s.paid)} מתוך ${Logic.money(s.due)} (${pct}%)`),
+        el('div', { class: 'small' }, `${pr.people.length} ברשימה · ${s.participants} משתתפים · שולם ${Logic.money(s.paid)} מתוך ${Logic.money(s.due)} (${pct}%)`),
         s.balance > 0 ? el('div', { class: 'small neg' }, 'נשאר לגבות ' + Logic.money(s.balance)) : null));
     }
     main.appendChild(cards);
@@ -43,17 +43,23 @@
     const db = Store.db;
     const name = el('input', { type: 'text', placeholder: 'למשל: קייטנת אחרי סוכות תשפ"ז' });
     const kind = select([['camp', 'קייטנה / רישום (מחיר לכל משתתף)'], ['sale', 'מכירה (רשימת מוצרים ומחירים)']], 'camp');
-    const copyFrom = select([['', 'פרויקט חדש לגמרי'], ...db.projects.map((p) => [p.id, 'להעתיק הגדרות מ: ' + p.name])], '');
-    const copyPeople = el('input', { type: 'checkbox' });
-    const copyPeopleRow = el('label', { class: 'check hidden' }, copyPeople, 'להעתיק גם את רשימת הנרשמים (בלי תשלומים)');
-    copyFrom.addEventListener('change', () => copyPeopleRow.classList.toggle('hidden', !copyFrom.value));
+    const copyFrom = select([['', 'פרויקט חדש לגמרי'], ...db.projects.slice().reverse().map((p) => [p.id, 'להעתיק הגדרות מ: ' + p.name])], '');
+    const peopleFrom = select([['', 'רשימת אנשים ריקה (אקליד או אייבא)'], ...db.projects.slice().reverse().filter((p) => p.people.length).map((p) => [p.id, 'להעתיק את רשימת האנשים מ: ' + p.name + ` (${p.people.length})`])], '');
+    const onlyIn = el('input', { type: 'checkbox' });
+    const copyMarks = el('input', { type: 'checkbox' });
+    const peopleOpts = el('div', { class: 'hidden' },
+      el('label', { class: 'check', style: { display: 'flex', marginBottom: '6px' } }, onlyIn, 'רק מי שהשתתף/ה שם'),
+      el('label', { class: 'check', style: { display: 'flex' } }, copyMarks, 'להעתיק גם מי נרשם/ה ומה הזמין/ה (בלי תשלומים)'));
+    copyFrom.addEventListener('change', () => { if (copyFrom.value && !peopleFrom.value && db.projects.find((p) => p.id === copyFrom.value).people.length) peopleFrom.value = copyFrom.value; peopleFrom.dispatchEvent(new Event('change')); });
+    peopleFrom.addEventListener('change', () => peopleOpts.classList.toggle('hidden', !peopleFrom.value));
     modal({
       title: 'פרויקט חדש',
       body: el('div', null,
         el('div', { class: 'form-row' }, field('שם הפרויקט', name)),
         el('div', { class: 'form-row' }, field('סוג', kind)),
-        db.projects.length ? el('div', { class: 'form-row' }, field('מבוסס על', copyFrom)) : null,
-        copyPeopleRow,
+        db.projects.length ? el('div', { class: 'form-row' }, field('הגדרות (מחיר, מוצרים, עמודות סימון)', copyFrom)) : null,
+        db.projects.some((p) => p.people.length) ? el('div', { class: 'form-row' }, field('רשימת אנשים', peopleFrom)) : null,
+        peopleOpts,
         el('p', { class: 'muted small' }, 'אפשר לשנות הכול אחר כך: מחיר, מוצרים, עמודות סימון.')),
       buttons: [
         { label: 'צור', primary: true, onclick: () => {
@@ -65,17 +71,31 @@
             pr.pricing = JSON.parse(JSON.stringify(src.pricing));
             pr.products = src.products.map((x) => Object.assign({}, x));
             pr.marks = src.marks.map((x) => Object.assign({}, x));
-            if (copyPeople.checked) {
-              for (const [pid, e] of Object.entries(src.enrollments)) {
-                if (!e.registered && !Object.values(e.items || {}).some((q) => Logic.num(q) > 0)) continue;
-                pr.enrollments[pid] = { registered: e.registered, items: Object.assign({}, e.items), discount: e.discount || 0, override: null, delivered: false, marks: {}, note: '' };
-              }
+          }
+          const psrc = db.projects.find((p) => p.id === peopleFrom.value);
+          if (psrc) {
+            const chosen = psrc.people.filter((p) => !onlyIn.checked || Logic.isParticipant(psrc, p));
+            const copied = Importer.copyPeople(chosen, psrc.columns, pr.columns, true);
+            pr.hiddenFields = (psrc.hiddenFields || []).slice();
+            Importer.merge(pr.people, copied.map((c) => c.person));
+            // מוצרים מועתקים לפי שם, כי לכל פרויקט מזהים משלו.
+            if (copyMarks.checked) {
+              const prodByName = new Map(pr.products.map((x) => [x.name, x.id]));
+              copied.forEach((c, i) => {
+                const e = psrc.enrollments[c.srcId];
+                if (!e) return;
+                const target = pr.people[pr.people.length - copied.length + i];
+                if (!target) return;
+                const items = {};
+                for (const x of psrc.products) { const id = prodByName.get(x.name); if (id && Logic.num((e.items || {})[x.id])) items[id] = e.items[x.id]; }
+                pr.enrollments[target.id] = { registered: !!e.registered, items, discount: e.discount || 0, override: null, delivered: false, marks: {}, note: '' };
+              });
             }
           }
           db.projects.push(pr);
           Store.commit();
           App.go('project', { id: pr.id, tab: 'settings' });
-          toast('הפרויקט נוצר. עכשיו מגדירים מחיר' + (pr.kind === 'sale' ? ' ומוצרים' : ''));
+          toast('הפרויקט נוצר. עכשיו מגדירים מחיר' + (pr.kind === 'sale' ? ' ומוצרים' : '') + (pr.people.length ? '' : ', ואז מוסיפים אנשים'));
         } },
         { label: 'ביטול' },
       ],

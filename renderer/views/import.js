@@ -27,7 +27,7 @@
     })).filter((s) => s.rows.some((r) => r.some((c) => String(c).trim())));
   }
 
-  Views.importDialog = async function (opts) {
+  Views.importDialog = async function (pr, opts) {
     opts = opts || {};
     let sheets;
     let fileName = opts.name || '';
@@ -53,11 +53,11 @@
         return;
       }
     }
-    mappingDialog(sheets, fileName);
+    mappingDialog(pr, sheets, fileName);
   };
 
-  function mappingDialog(sheets, fileName) {
-    const db = Store.db;
+  function mappingDialog(pr, sheets, fileName) {
+    const db = pr;
     const body = el('div');
     let sheetIdx = 0;
     let reversed = false;
@@ -69,7 +69,8 @@
       ...db.columns.map((c) => ['col:' + c.id, 'עמודה שלי: ' + c.name]),
       ['new', '➕ עמודה חדשה בשם הכותרת'],
     ];
-    const projSel = select([['', 'לא לרשום לפרויקט'], ...db.projects.filter((p) => !p.archived).map((p) => [p.id, 'לסמן כנרשמים ב: ' + p.name])], '');
+    const regBox = el('input', { type: 'checkbox' });
+    const regLabel = pr.pricing.mode !== 'none' ? el('label', { class: 'check' }, regBox, 'לסמן את כולם כנרשמים') : null;
 
     const run = () => {
       const sheet = sheets[sheetIdx];
@@ -89,7 +90,7 @@
       if (sheets[sheetIdx].pdf) {
         tools.appendChild(el('label', { class: 'check' }, el('input', { type: 'checkbox', checked: reversed, onchange: (e) => { reversed = e.target.checked; run(); } }), 'הטקסט הפוך (תקן כיוון עברית)'));
       }
-      if (db.projects.length) tools.appendChild(projSel);
+      if (regLabel) tools.appendChild(regLabel);
       body.appendChild(tools);
 
       const cols = analysis.columns.filter((c) => c.filled > 0 || mapping[c.index] !== 'ignore');
@@ -140,15 +141,14 @@
           if (!incoming.length) { toast('לא נמצאו שמות לייבוא'); return false; }
           const before = new Set(db.people.map((p) => p.id));
           const r = Importer.merge(db.people, incoming);
-          const pr = db.projects.find((p) => p.id === projSel.value);
-          if (pr) {
+          if (regBox.checked) {
             // מסמנים את כל מי שבקובץ, גם מי שכבר היה ברשימה.
             const keys = new Set(incoming.map(Importer.personKey));
             for (const p of db.people) if (keys.has(Importer.personKey(p))) Logic.ensureEnrollment(pr, p.id).registered = true;
           }
           App.changed();
           const added = db.people.filter((p) => !before.has(p.id)).length;
-          toast(`יובאו ${added} חדשים, ${r.updated} עודכנו, ${r.same} כבר היו` + (pr ? ` · סומנו כנרשמים ב"${pr.name}"` : ''));
+          toast(`יובאו ${added} חדשים, ${r.updated} עודכנו, ${r.same} כבר היו` + (regBox.checked ? ' · סומנו כנרשמים' : ''));
         } },
         { label: 'ביטול' },
       ],

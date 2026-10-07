@@ -6,6 +6,7 @@
   window.Views = window.Views || {};
 
   const TABS = [
+    ['people', '👥 אנשים'],
     ['list', '📋 רישום ורכישות'],
     ['payments', '💰 תשלומים'],
     ['expenses', '🧾 הוצאות'],
@@ -20,11 +21,15 @@
     return filters[pr.id] || (filters[pr.id] = { q: '', cls: '', show: 'all', family: false });
   }
 
-  function people() { return Store.db.people; }
-  function personById(id) { return Store.db.people.find((p) => p.id === id); }
+  // הפרויקט שמוצג. לכל פרויקט רשימת אנשים משלו.
+  let cur = null;
+  function people() { return cur.people; }
+  function personById(id) { return cur.people.find((p) => p.id === id); }
   function label(p) { return p ? (L.fullName(p) || '(ללא שם)') + (p.cls ? ' · ' + p.cls : '') : '(נמחק)'; }
 
   Views.project = function (main, pr, tab) {
+    cur = pr;
+    if (!tab) tab = pr.people.length ? 'list' : 'people';
     main.appendChild(el('div', { class: 'page-head' },
       el('button', { class: 'btn ghost', onclick: () => App.go('projects'), title: 'לכל הפרויקטים' }, '→'),
       el('div', null, el('div', { class: 'muted small' }, Views.KIND_LABEL[pr.kind] + (pr.archived ? ' · בארכיון' : '')), el('h1', null, pr.name)),
@@ -35,7 +40,7 @@
       el('button', { class: 'tab' + (k === tab ? ' active' : ''), onclick: () => App.go('project', { id: pr.id, tab: k }) }, l))));
     const body = el('div');
     main.appendChild(body);
-    ({ list: listTab, payments: paymentsTab, expenses: expensesTab, summary: summaryTab, supply: supplyTab, settings: settingsTab }[tab] || listTab)(body, pr);
+    ({ people: Views.projectPeople, list: listTab, payments: paymentsTab, expenses: expensesTab, summary: summaryTab, supply: supplyTab, settings: settingsTab }[tab] || listTab)(body, pr);
   };
 
   // ---------- רישום ורכישות ----------
@@ -53,8 +58,8 @@
     if (!people().length) {
       root.appendChild(el('div', { class: 'card empty' },
         el('div', { class: 'big' }, '👥'), el('h2', null, 'אין עדיין אנשים ברשימה'),
-        el('p', null, 'מוסיפים אנשים פעם אחת ב"רשימת אנשים", והם זמינים בכל הפרויקטים.'),
-        el('button', { class: 'btn primary', onclick: () => App.go('people') }, 'לרשימת האנשים')));
+        el('p', null, 'מקלידים שמות, מעתיקים רשימה מפרויקט אחר, או מייבאים מקובץ - בלשונית "אנשים".'),
+        el('button', { class: 'btn primary', onclick: () => App.go('project', { id: pr.id, tab: 'people' }) }, 'ללשונית האנשים')));
       return;
     }
 
@@ -198,6 +203,7 @@
   }
 
   function paymentDialog(pr, person, family, existing) {
+    cur = pr;
     const picker = personPicker(person);
     const amount = el('input', { type: 'number', min: 0, step: 'any' });
     const method = select(L.PAYMENT_METHODS, existing ? existing.method : (Store.db.settings.lastMethod || 'מזומן'));
@@ -452,8 +458,8 @@
         pr.pricing.mode !== 'none' ? field(pr.pricing.mode === 'group' ? 'מחיר ברירת מחדל (לכיתה בלי מחיר)' : 'מחיר למשתתף (₪)',
           el('input', { type: 'number', min: 0, step: 'any', value: pr.pricing.flat || '', onchange: (e) => { pr.pricing.flat = L.num(e.target.value); App.changed(); } })) : el('div')));
     if (pr.pricing.mode === 'group') {
-      const classes = [...new Set([...db.people.map((p) => (p.cls || '').trim()).filter(Boolean), ...Object.keys(pr.pricing.groups)])].sort((a, b) => a.localeCompare(b, 'he'));
-      if (!classes.length) priceCard.appendChild(el('p', { class: 'muted' }, 'אין עדיין כיתות ברשימת האנשים.'));
+      const classes = [...new Set([...pr.people.map((p) => (p.cls || '').trim()).filter(Boolean), ...Object.keys(pr.pricing.groups)])].sort((a, b) => a.localeCompare(b, 'he'));
+      if (!classes.length) priceCard.appendChild(el('p', { class: 'muted' }, 'אין עדיין כיתות ברשימת האנשים של הפרויקט.'));
       priceCard.appendChild(el('div', { class: 'grid kpis' }, classes.map((c) => field('כיתה ' + c,
         el('input', { type: 'number', min: 0, step: 'any', value: pr.pricing.groups[c] === undefined ? '' : pr.pricing.groups[c], placeholder: String(pr.pricing.flat || 0),
           onchange: (e) => { if (e.target.value === '') delete pr.pricing.groups[c]; else pr.pricing.groups[c] = L.num(e.target.value); Store.commit(); } })))));
@@ -505,7 +511,7 @@
 
     root.appendChild(el('div', { class: 'card' }, el('h3', null, 'פעולות'),
       el('div', { class: 'toolbar' },
-        el('button', { class: 'btn primary', onclick: () => App.go('project', { id: pr.id, tab: 'list' }) }, 'סיימתי - לרשימת הרישום'),
+        el('button', { class: 'btn primary', onclick: () => App.go('project', { id: pr.id }) }, 'סיימתי - להמשך'),
         el('button', { class: 'btn', onclick: () => Views.duplicateProject(pr) }, '📑 שכפל לפרויקט חדש'),
         el('button', { class: 'btn', onclick: () => { pr.archived = !pr.archived; App.changed(); toast(pr.archived ? 'הועבר לארכיון' : 'הוחזר לפעילים'); } }, pr.archived ? '↩️ החזר מהארכיון' : '🗂️ העבר לארכיון'),
         el('button', { class: 'btn danger', onclick: () => Views.deleteProject(pr) }, '🗑 מחק פרויקט'))));
@@ -539,6 +545,7 @@
   }
 
   function receiptDialog(pr, p, receiptNo) {
+    cur = pr;
     const preview = el('div', { class: 'receipt-preview' }, receiptHtml(pr, p, receiptNo));
     const fileName = `קבלה ${receiptNo || ''} ${L.fullName(p)}.pdf`.replace(/\s+/g, ' ');
     modal({

@@ -1,20 +1,23 @@
-// רשימת האנשים: הקלדה ידנית, עריכה בטבלה, עמודות מותאמות אישית, ייבוא (אופציונלי) וייצוא.
+// רשימת האנשים של פרויקט: הקלדה ידנית, עריכה בטבלה, עמודות מותאמות אישית, ייבוא (אופציונלי) וייצוא.
 (function () {
   'use strict';
   const { el, clear, Store, toast, modal, confirmBox, field, select } = UI;
   window.Views = window.Views || {};
 
-  const state = { q: '', cls: '', sort: null, dir: 1 };
+  // הפרויקט שמוצג עכשיו. לכל פרויקט רשימה משלו, ומצב החיפוש נשמר לכל פרויקט בנפרד.
+  let cur = null;
+  const states = {};
+  let state = { q: '', cls: '', sort: null, dir: 1 };
 
   function visibleFields() {
-    const hidden = new Set(Store.db.settings.hiddenFields || []);
+    const hidden = new Set(cur.hiddenFields || []);
     return Logic.PERSON_FIELDS.filter((f) => !hidden.has(f.key));
   }
 
   function allColumns() {
     return [
       ...visibleFields().map((f) => ({ key: f.key, label: f.label, builtin: true })),
-      ...Store.db.columns.map((c) => ({ key: 'col:' + c.id, label: c.name, type: c.type, colId: c.id })),
+      ...cur.columns.map((c) => ({ key: 'col:' + c.id, label: c.name, type: c.type, colId: c.id })),
     ];
   }
 
@@ -38,15 +41,17 @@
   }
 
   function classes() {
-    return [...new Set(Store.db.people.map((p) => (p.cls || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'he'));
+    return [...new Set(cur.people.map((p) => (p.cls || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'he'));
   }
 
   function newPerson(data) {
     return Object.assign({ id: Logic.uid(), createdAt: new Date().toISOString(), firstName: '', lastName: '', cls: '', custom: {} }, data || {});
   }
 
-  Views.people = function (main) {
-    const db = Store.db;
+  Views.projectPeople = function (main, project) {
+    cur = project;
+    state = states[project.id] || (states[project.id] = { q: '', cls: '', sort: null, dir: 1 });
+    const db = { people: project.people };
     const famSize = new Map();
     for (const fam of Logic.families(db.people)) for (const m of fam) famSize.set(m.id, fam.length);
 
@@ -54,13 +59,13 @@
     const clsSel = select([['', 'כל הכיתות'], ...classes()], state.cls);
     const countEl = el('span', { class: 'muted' });
 
-    main.appendChild(el('div', { class: 'page-head' },
-      el('h1', null, 'רשימת אנשים'),
-      el('span', { class: 'muted' }, db.people.length + ' רשומים'),
+    main.appendChild(el('div', { class: 'toolbar' },
+      el('strong', null, 'האנשים בפרויקט: ' + db.people.length),
       el('div', { class: 'grow' }),
       el('button', { class: 'btn primary', onclick: addOne }, '➕ הוסף אדם'),
       el('button', { class: 'btn', onclick: addMany }, '📝 הקלדת רשימה'),
-      el('button', { class: 'btn', onclick: () => Views.importDialog() }, '📥 ייבוא מאקסל / PDF'),
+      el('button', { class: 'btn', onclick: () => Views.importDialog(cur) }, '📥 ייבוא מאקסל / PDF'),
+      otherProjects().length ? el('button', { class: 'btn', onclick: importFromProject }, '📋 ייבוא מפרויקט אחר') : null,
       el('button', { class: 'btn', onclick: exportPeople }, '📤 ייצוא לאקסל'),
       el('button', { class: 'btn', onclick: manageColumns }, '🧩 עמודות'),
     ));
@@ -69,11 +74,12 @@
       main.appendChild(el('div', { class: 'card empty' },
         el('div', { class: 'big' }, '👥'),
         el('h2', null, 'הרשימה ריקה'),
-        el('p', null, 'אפשר להקליד שמות ישירות בתוכנה, או (רק אם נוח) לייבא מקובץ אקסל או PDF.'),
+        el('p', null, 'אפשר להקליד שמות ישירות בתוכנה, להעתיק רשימה מפרויקט אחר, או (רק אם נוח) לייבא מקובץ אקסל או PDF.'),
         el('div', { class: 'toolbar', style: { justifyContent: 'center' } },
           el('button', { class: 'btn primary', onclick: addOne }, '➕ הוסף אדם'),
           el('button', { class: 'btn', onclick: addMany }, '📝 הקלדת רשימה'),
-          el('button', { class: 'btn', onclick: () => Views.importDialog() }, '📥 ייבוא מקובץ'))));
+          otherProjects().length ? el('button', { class: 'btn', onclick: importFromProject }, '📋 ייבוא מפרויקט אחר') : null,
+          el('button', { class: 'btn', onclick: () => Views.importDialog(cur) }, '📥 ייבוא מקובץ'))));
       return;
     }
 
@@ -125,7 +131,7 @@
 
   function addOne() {
     const p = newPerson({ cls: state.cls || '' });
-    Store.db.people.unshift(p);
+    cur.people.unshift(p);
     state.q = '';
     state.sort = null;
     App.changed();
@@ -147,14 +153,14 @@
           const lines = ta.value.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
           if (!lines.length) return false;
           if (lines.some((l) => l.includes('\t'))) {
-            Views.importDialog({ rows: lines.map((l) => l.split('\t')), name: 'הדבקה' });
+            Views.importDialog(cur, { rows: lines.map((l) => l.split('\t')), name: 'הדבקה' });
             return;
           }
           const people = lines.map((l) => {
             const parts = l.split(/\s+/);
             return { firstName: parts[0], lastName: parts.slice(1).join(' '), cls: cls.value.trim() };
           });
-          const r = Importer.merge(Store.db.people, people);
+          const r = Importer.merge(cur.people, people);
           App.changed();
           toast(`נוספו ${r.added} אנשים` + (r.same ? ` (${r.same} כבר היו ברשימה)` : ''));
         } },
@@ -164,34 +170,92 @@
   }
 
   async function removePerson(p) {
-    const inProjects = Store.db.projects.filter((pr) => pr.enrollments[p.id] || pr.payments.some((x) => x.personId === p.id));
+    const pr = cur;
     const name = Logic.fullName(p) || 'שורה ריקה';
-    const txt = inProjects.length
-      ? `${name} מופיע/ה ב-${inProjects.length} פרויקטים (${inProjects.map((x) => x.name).join(', ')}). המחיקה תמחק גם את הרישום והתשלומים שלו/ה שם. אפשר לבטל עם Ctrl+Z.`
-      : `למחוק את ${name}? אפשר לבטל עם Ctrl+Z.`;
+    const pays = pr.payments.filter((x) => x.personId === p.id);
+    const txt = pays.length
+      ? `ל${name} רשומים ${pays.length} תשלומים בפרויקט. המחיקה תמחק גם אותם. אפשר לבטל עם Ctrl+Z.`
+      : `למחוק את ${name} מהפרויקט? אפשר לבטל עם Ctrl+Z.`;
     if (Logic.fullName(p) && !(await confirmBox('מחיקה', txt, 'מחק'))) return;
-    Store.db.people = Store.db.people.filter((x) => x.id !== p.id);
-    for (const pr of Store.db.projects) {
-      delete pr.enrollments[p.id];
-      pr.payments = pr.payments.filter((x) => x.personId !== p.id);
-    }
+    pr.people = pr.people.filter((x) => x.id !== p.id);
+    delete pr.enrollments[p.id];
+    pr.payments = pr.payments.filter((x) => x.personId !== p.id);
     App.changed();
     toast('נמחק', { label: 'בטל', fn: () => { Store.undo(); App.render(); } });
   }
 
+  function otherProjects() {
+    return Store.db.projects.filter((x) => x !== cur && x.people.length);
+  }
+
+  // העתקת רשימה מפרויקט אחר: כולם או רק חלק, עם או בלי העמודות, ואפשר לסמן מיד כנרשמים.
+  function importFromProject() {
+    const pr = cur;
+    const srcSel = select(otherProjects().slice().reverse().map((x) => [x.id, x.name + ` (${x.people.length})`]), '');
+    const who = select([
+      ['all', 'כל האנשים'], ['in', 'רק מי שהשתתף/ה שם'], ['paid', 'רק מי ששילם/ה שם הכול'], ['debt', 'רק מי שחייב/ת שם'], ['out', 'רק מי שלא השתתף/ה שם'],
+    ], 'all');
+    const withCols = el('input', { type: 'checkbox', checked: true });
+    const register = el('input', { type: 'checkbox' });
+    const count = el('p', { class: 'muted' });
+    const pick = () => {
+      const src = Store.db.projects.find((x) => x.id === srcSel.value);
+      if (!src) return [];
+      return src.people.filter((p) => {
+        const r = Logic.personRow(src, p);
+        switch (who.value) {
+          case 'in': return r.participant;
+          case 'out': return !r.participant;
+          case 'paid': return r.status === 'paid' || r.status === 'over';
+          case 'debt': return r.balance > 0;
+        }
+        return true;
+      });
+    };
+    const refresh = () => { count.textContent = `ייובאו ${pick().length} אנשים. מי שכבר ברשימה (אותו שם וכיתה) לא יוכפל - רק יושלמו פרטים חסרים.`; };
+    srcSel.addEventListener('change', refresh);
+    who.addEventListener('change', refresh);
+    refresh();
+    modal({
+      title: 'ייבוא רשימה מפרויקט אחר',
+      body: el('div', null,
+        el('div', { class: 'form-row' }, field('מאיזה פרויקט', srcSel)),
+        el('div', { class: 'form-row' }, field('את מי', who)),
+        el('label', { class: 'check', style: { display: 'flex', marginBottom: '8px' } }, withCols, 'להעתיק גם את העמודות שלי (כמו "אלרגיות")'),
+        pr.pricing.mode !== 'none' ? el('label', { class: 'check', style: { display: 'flex', marginBottom: '8px' } }, register, 'לסמן את כולם כנרשמים בפרויקט הזה') : null,
+        count),
+      buttons: [
+        { label: 'ייבא', primary: true, onclick: () => {
+          const src = Store.db.projects.find((x) => x.id === srcSel.value);
+          const chosen = pick();
+          if (!src || !chosen.length) { toast('אין את מי לייבא'); return false; }
+          const copied = Importer.copyPeople(chosen, src.columns, pr.columns, withCols.checked);
+          const r = Importer.merge(pr.people, copied.map((c) => c.person));
+          if (register.checked) {
+            const keys = new Set(copied.map((c) => Importer.personKey(c.person)));
+            for (const p of pr.people) if (keys.has(Importer.personKey(p))) Logic.ensureEnrollment(pr, p.id).registered = true;
+          }
+          App.changed();
+          toast(`נוספו ${r.added} אנשים מ"${src.name}"` + (r.updated ? `, ${r.updated} עודכנו` : '') + (r.same ? `, ${r.same} כבר היו` : ''));
+        } },
+        { label: 'ביטול' },
+      ],
+    });
+  }
+
   function manageColumns() {
-    const db = Store.db;
+    const db = cur;
     const body = el('div');
     const draw = () => {
       clear(body);
       body.appendChild(el('h3', null, 'עמודות קבועות'));
       body.appendChild(el('p', { class: 'muted small' }, 'אפשר להסתיר עמודות שלא צריך. הנתונים לא נמחקים.'));
-      const hidden = new Set(db.settings.hiddenFields || []);
+      const hidden = new Set(db.hiddenFields || []);
       body.appendChild(el('div', { class: 'chips', style: { marginBottom: '16px' } }, Logic.PERSON_FIELDS.map((f) =>
         el('label', { class: 'chip check' }, el('input', { type: 'checkbox', checked: !hidden.has(f.key), onchange: (e) => {
-          const h = new Set(db.settings.hiddenFields || []);
+          const h = new Set(db.hiddenFields || []);
           e.target.checked ? h.delete(f.key) : h.add(f.key);
-          db.settings.hiddenFields = [...h];
+          db.hiddenFields = [...h];
           Store.commit();
         } }), f.label))));
       body.appendChild(el('h3', null, 'עמודות שלי'));
@@ -223,10 +287,10 @@
   }
 
   function exportPeople() {
-    const cols = [...Logic.PERSON_FIELDS.map((f) => ({ key: f.key, label: f.label })), ...Store.db.columns.map((c) => ({ key: 'col:' + c.id, label: c.name, colId: c.id }))];
+    const cols = [...Logic.PERSON_FIELDS.map((f) => ({ key: f.key, label: f.label })), ...cur.columns.map((c) => ({ key: 'col:' + c.id, label: c.name, colId: c.id }))];
     const rows = [cols.map((c) => c.label)];
-    for (const p of Store.db.people) rows.push(cols.map((c) => (c.colId ? (p.custom || {})[c.colId] : p[c.key]) || ''));
-    Views.saveXlsx('רשימת אנשים.xlsx', [{ name: 'אנשים', rows }]);
+    for (const p of cur.people) rows.push(cols.map((c) => (c.colId ? (p.custom || {})[c.colId] : p[c.key]) || ''));
+    Views.saveXlsx(cur.name + ' - רשימת אנשים.xlsx', [{ name: 'אנשים', rows }]);
   }
 
   Views.saveXlsx = async function (name, sheets) {

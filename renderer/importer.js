@@ -97,15 +97,23 @@
   }
 
   // מיזוג: אותו שם פרטי+משפחה+כיתה = אותו אדם. משלימים שדות ריקים ולא דורסים מה שהוקלד ידנית.
+  // שם כפול (למשל שתי "רחל אנשין" באותה כיתה) הוא שני אנשים: המופע השני בקובץ מותאם לאדם השני
+  // ברשימה, כך שייבוא חוזר של אותו קובץ לא מוסיף אף אחד.
   function merge(existing, incoming) {
-    const byKey = new Map(existing.map((p) => [personKey(p), p]));
+    const byKey = new Map();
+    for (const p of existing) {
+      const k = personKey(p);
+      if (!byKey.has(k)) byKey.set(k, []);
+      byKey.get(k).push(p);
+    }
+    const seen = new Map();
     let added = 0, updated = 0, same = 0;
-    const seenInFile = new Set();
     for (const inc of incoming) {
       const key = personKey(inc);
-      const cur = byKey.get(key);
-      if (cur && !seenInFile.has(key)) {
-        seenInFile.add(key);
+      const n = seen.get(key) || 0;
+      seen.set(key, n + 1);
+      const cur = (byKey.get(key) || [])[n];
+      if (cur) {
         let changed = false;
         for (const [k, v] of Object.entries(inc)) {
           if (k === 'custom') continue;
@@ -117,11 +125,7 @@
         }
         changed ? updated++ : same++;
       } else {
-        // שם כפול בתוך אותו קובץ הוא כנראה שני אנשים שונים (למשל שתי "רחל אנשין"), ולכן מוסיפים.
-        seenInFile.add(key);
-        const p = Object.assign({ id: Logic.uid(), createdAt: new Date().toISOString() }, inc);
-        existing.push(p);
-        if (!byKey.has(key)) byKey.set(key, p);
+        existing.push(Object.assign({ id: Logic.uid(), createdAt: new Date().toISOString() }, inc));
         added++;
       }
     }
@@ -157,9 +161,28 @@
     return rows;
   }
 
+  // העתקת אנשים מפרויקט אחר: שדות קבועים כמו שהם, ועמודות מותאמות לפי שם העמודה.
+  // עמודה שאין ביעד נוצרת בו. מחזיר [{person, srcId}] כדי שאפשר יהיה להעתיק גם סימונים.
+  function copyPeople(srcPeople, srcColumns, destColumns, withColumns) {
+    const colMap = {};
+    if (withColumns) {
+      for (const c of srcColumns || []) {
+        let d = destColumns.find((x) => x.name === c.name);
+        if (!d) { d = { id: Logic.uid(), name: c.name, type: c.type }; destColumns.push(d); }
+        colMap[c.id] = d.id;
+      }
+    }
+    return srcPeople.map((p) => {
+      const person = { custom: {} };
+      for (const f of Logic.PERSON_FIELDS) if (p[f.key]) person[f.key] = p[f.key];
+      for (const [k, v] of Object.entries(p.custom || {})) if (colMap[k] && v) person.custom[colMap[k]] = v;
+      return { person, srcId: p.id };
+    });
+  }
+
   function reverseHebrew(s) {
     return String(s).split(' ').reverse().map((w) => (/[֐-׿]/.test(w) ? [...w].reverse().join('') : w)).join(' ');
   }
 
-  return { SYNONYMS, clean, guessField, findHeaderRow, analyze, rowsToPeople, personKey, merge, pdfItemsToRows, reverseHebrew };
+  return { SYNONYMS, clean, guessField, findHeaderRow, analyze, rowsToPeople, personKey, merge, copyPeople, pdfItemsToRows, reverseHebrew };
 });

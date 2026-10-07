@@ -99,3 +99,33 @@ test('num מקבל סכומים עם פסיקים ושקלים', () => {
   assert.strictEqual(L.num(''), 0);
   assert.strictEqual(L.num('abc'), 0);
 });
+
+test('מעבר מרשימה כללית לרשימה לכל פרויקט: הרישומים והתשלומים נשארים מחוברים', () => {
+  const old = {
+    settings: { hiddenFields: ['email'] },
+    columns: [{ id: 'c', name: 'אלרגיות', type: 'text' }],
+    people: [{ id: 'a', firstName: 'רחל', lastName: 'כהן', cls: 'א' }],
+    projects: [L.newProject('קייטנה', 'camp'), L.newProject('ספרים', 'sale')],
+  };
+  delete old.projects[0].people; delete old.projects[0].columns; delete old.projects[0].hiddenFields;
+  delete old.projects[1].people; delete old.projects[1].columns; delete old.projects[1].hiddenFields;
+  old.projects[0].pricing = { mode: 'flat', flat: 100, groups: {} };
+  L.ensureEnrollment(old.projects[0], 'a').registered = true;
+  const db = L.migrate(old);
+  assert.strictEqual(db.people, undefined);
+  assert.strictEqual(db.columns, undefined);
+  assert.strictEqual(db.projects[0].people.length, 1);
+  assert.strictEqual(db.projects[1].people.length, 1);
+  assert.notStrictEqual(db.projects[0].people[0], db.projects[1].people[0], 'עותקים נפרדים');
+  assert.strictEqual(L.amountDue(db.projects[0], db.projects[0].people[0]), 100);
+  assert.deepStrictEqual(db.projects[1].hiddenFields, ['email']);
+  assert.strictEqual(db.projects[1].columns[0].name, 'אלרגיות');
+});
+
+test('מעבר: רשימה כללית בלי פרויקטים נשמרת בפרויקט חדש', () => {
+  const db = L.migrate({ people: [{ id: 'a', firstName: 'רחל' }], columns: [], projects: [] });
+  assert.strictEqual(db.projects.length, 1);
+  assert.strictEqual(db.projects[0].people[0].firstName, 'רחל');
+  const empty = L.migrate({ people: [], projects: [] });
+  assert.strictEqual(empty.projects.length, 0);
+});

@@ -39,8 +39,6 @@
     return {
       schema: 1,
       settings: { orgName: '', receiptFooter: 'תודה רבה!', nextReceiptNo: 1, theme: 'light' },
-      columns: [],
-      people: [],
       projects: [],
     };
   }
@@ -52,6 +50,10 @@
       kind: kind || 'camp', // camp = רישום במחיר קבוע, sale = מכירת מוצרים
       createdAt: new Date().toISOString(),
       archived: false,
+      // לכל פרויקט רשימת אנשים ועמודות משלו. אפשר להעתיק רשימה מפרויקט אחר.
+      people: [],
+      columns: [],
+      hiddenFields: [],
       // מחיר הרישום: none (אין), flat (שווה לכולם), group (לפי כיתה/קבוצה)
       pricing: { mode: kind === 'sale' ? 'none' : 'flat', flat: 0, groups: {} },
       products: [],
@@ -257,7 +259,43 @@
     return v.toLocaleString('he-IL', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + ' ₪';
   }
 
+  // השלמת שדות שנוספו בגרסאות מאוחרות יותר, כדי שקובץ ישן ייפתח בלי שגיאות.
+  // בגרסאות הראשונות הייתה רשימת אנשים אחת לכל הפרויקטים; היא מועתקת לכל פרויקט (באותם מזהים,
+  // כדי שהרישומים והתשלומים יישארו מחוברים), ואם אין פרויקטים - נשמרת בפרויקט חדש.
+  function migrate(db) {
+    const base = emptyDb();
+    db.settings = Object.assign({}, base.settings, db.settings || {});
+    db.projects = db.projects || [];
+    if (Array.isArray(db.people)) {
+      const legacy = JSON.stringify({ people: db.people, columns: db.columns || [], hidden: db.settings.hiddenFields || [] });
+      if (db.people.length && !db.projects.length) {
+        const pr = newProject('רשימה מהגרסה הקודמת', 'camp');
+        pr.pricing.mode = 'none';
+        delete pr.people; // כדי שהלולאה הבאה תעתיק אליו את הרשימה
+        db.projects.push(pr);
+      }
+      for (const pr of db.projects) {
+        if (pr.people) continue;
+        const copy = JSON.parse(legacy);
+        pr.people = copy.people;
+        pr.columns = copy.columns;
+        pr.hiddenFields = copy.hidden;
+      }
+      delete db.people;
+      delete db.columns;
+      delete db.settings.hiddenFields;
+    }
+    for (const pr of db.projects) {
+      const np = newProject(pr.name, pr.kind);
+      for (const k of Object.keys(np)) if (pr[k] === undefined) pr[k] = np[k];
+      pr.pricing = Object.assign({ mode: 'none', flat: 0, groups: {} }, pr.pricing);
+      for (const p of pr.people) p.custom = p.custom || {};
+    }
+    return db;
+  }
+
   return {
+    migrate,
     PERSON_FIELDS, PAYMENT_METHODS, STATUS_LABEL,
     uid, num, round2, emptyDb, newProject, enrollment, ensureEnrollment,
     basePrice, isParticipant, amountDue, paidBy, status, personRow,
