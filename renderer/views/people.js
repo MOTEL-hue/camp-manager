@@ -108,7 +108,7 @@
         for (const c of cols) {
           let input;
           if (c.type === 'check') {
-            input = el('input', { type: 'checkbox', checked: !!getVal(p, c), onchange: (e) => { setVal(p, c, e.target.checked ? 'V' : ''); Store.commit(); } });
+            input = el('input', { type: 'checkbox', checked: Logic.isYes(getVal(p, c)), onchange: (e) => { setVal(p, c, e.target.checked ? 'V' : ''); Store.commit(); } });
             tr.appendChild(el('td', { class: 'center' }, input));
           } else {
             input = el('input', { type: 'text', value: getVal(p, c) || '', dir: Logic.PERSON_FIELDS.find((f) => f.key === c.key && f.phone) || c.key === 'email' ? 'ltr' : null,
@@ -263,7 +263,13 @@
       for (const c of db.columns) {
         body.appendChild(el('div', { class: 'toolbar' },
           el('input', { type: 'text', value: c.name, onchange: (e) => { c.name = e.target.value.trim() || c.name; Store.commit(); } }),
-          select([['text', 'טקסט'], ['check', 'סימון V']], c.type, { onchange: (e) => { c.type = e.target.value; Store.commit(); } }),
+          select([['text', 'טקסט'], ['check', 'סימון V']], c.type, { onchange: (e) => { c.type = e.target.value; Store.commit(); draw(); } }),
+          c.type === 'check' ? el('label', { class: 'check small' }, el('input', { type: 'checkbox', checked: c.showInList !== false,
+            onchange: (e) => { c.showInList = e.target.checked; Store.commit(); } }), 'להציג גם ברישום') : null,
+          c.type === 'check' && (db.pricing.mode !== 'none' || db.kind === 'list') ? el('button', { class: 'btn small', title: 'מסמן כנרשמים בפרויקט את כל מי שמסומן/ת בעמודה הזו',
+            onclick: () => fromColumn(c, 'reg') }, '📋 המסומנים = נרשמו') : null,
+          c.type === 'check' && db.kind !== 'list' ? el('button', { class: 'btn small', title: 'רושם תשלום מלא לכל מי שמסומן/ת בעמודה הזו',
+            onclick: () => fromColumn(c, 'paidFull') }, '💰 המסומנים = שילמו הכול') : null,
           el('button', { class: 'btn small danger', onclick: async () => {
             if (!(await confirmBox('מחיקת עמודה', `למחוק את העמודה "${c.name}" ואת כל הערכים שבה?`, 'מחק'))) return;
             db.columns = db.columns.filter((x) => x !== c);
@@ -284,6 +290,26 @@
     };
     draw();
     modal({ title: 'ניהול עמודות', body, onclose: () => App.render() });
+  }
+
+  // המרה של עמודת V קיימת (למשל "שולם" שיובאה מאקסל) לרישום או לתשלום בפרויקט.
+  async function fromColumn(c, what) {
+    const pr = cur;
+    const marked = pr.people.filter((p) => Logic.isYes((p.custom || {})[c.id]));
+    if (!marked.length) { toast('אין מסומנים בעמודה "' + c.name + '"'); return; }
+    const txt = what === 'reg'
+      ? `לסמן כנרשמים בפרויקט את ${marked.length} המסומנים בעמודה "${c.name}"?`
+      : `לרשום "שולם הכול" (תשלום על היתרה, אמצעי: אחר) ל-${marked.length} המסומנים בעמודה "${c.name}"? מי שכבר שילם לא יחויב שוב.`;
+    if (!(await confirmBox('העברה מעמודה', txt, 'כן'))) return;
+    const incoming = marked.map((p) => {
+      const o = {};
+      Object.defineProperty(o, 'projectData', { value: { reg: what === 'reg', paidFull: what === 'paidFull', items: {}, marks: {} }, enumerable: false });
+      return o;
+    });
+    const r = Importer.applyProjectData(pr, incoming, marked, { date: UI.today() });
+    App.changed();
+    toast(what === 'reg' ? `${r.registered} סומנו כנרשמים` : `נרשמו ${r.payments} תשלומים (${Logic.money(r.paidSum)})`
+      + (r.unpriced ? ` · ${r.unpriced} בלי מחיר (לא נרשמים / אין מחיר בהגדרות)` : ''));
   }
 
   function exportPeople() {

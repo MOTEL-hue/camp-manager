@@ -68,6 +68,10 @@
       ...Logic.PERSON_FIELDS.map((f) => [f.key, f.label]),
       ...db.columns.map((c) => ['col:' + c.id, 'עמודה שלי: ' + c.name]),
       ['new', '➕ עמודה חדשה בשם הכותרת'],
+      ...(pr.kind === 'list' || pr.pricing.mode !== 'none' ? [['reg', '📋 נרשם/ה בפרויקט (V)']] : []),
+      ...(pr.kind === 'list' ? [] : [['paidFull', '💰 שולם הכול (V)'], ['paidAmount', '💰 סכום ששולם (מספר)']]),
+      ...pr.marks.map((m) => ['mark:' + m.id, '☑ סימון בפרויקט: ' + m.name]),
+      ...pr.products.map((x) => ['qty:' + x.id, '📦 כמות: ' + x.name]),
     ];
     const regBox = el('input', { type: 'checkbox' });
     const regLabel = pr.pricing.mode !== 'none' ? el('label', { class: 'check' }, regBox, 'לסמן את כולם כנרשמים') : null;
@@ -75,14 +79,14 @@
     const run = () => {
       const sheet = sheets[sheetIdx];
       const rows = reversed ? sheet.rows.map((r) => r.map((c) => Importer.reverseHebrew(c))) : sheet.rows;
-      analysis = Importer.analyze(rows);
+      analysis = Importer.analyze(rows, { marks: pr.marks, products: pr.products, columns: pr.columns });
       mapping = analysis.columns.map((c) => c.target);
       draw();
     };
 
     const draw = () => {
       clear(body);
-      body.appendChild(el('div', { class: 'help' }, 'בדקו שכל עמודה בקובץ משויכת לשדה הנכון. אנשים שכבר קיימים ברשימה (אותו שם וכיתה) לא יוכפלו - רק יושלמו פרטים חסרים.'));
+      body.appendChild(el('div', { class: 'help' }, 'בדקו שכל עמודה בקובץ משויכת לשדה הנכון. עמודה של V יכולה להיכנס לרישום ("נרשם/ה"), לתשלום ("שולם הכול") או לעמודת סימון. אנשים שכבר קיימים ברשימה (אותו שם וכיתה) לא יוכפלו - רק יושלמו פרטים חסרים.'));
       const tools = el('div', { class: 'toolbar' });
       if (sheets.length > 1) {
         tools.appendChild(field('גיליון', select(sheets.map((s, i) => [i, s.name]), sheetIdx, { onchange: (e) => { sheetIdx = +e.target.value; run(); } })));
@@ -106,7 +110,13 @@
         mapping.forEach((t, i) => { if (t === 'new') tmpIds[i] = 'tmp' + i; });
         const ppl = Importer.rowsToPeople(analysis, mapping, tmpIds);
         const shown = Logic.PERSON_FIELDS.filter((f) => mapping.includes(f.key));
-        clear(pv).appendChild(el('h3', null, `תצוגה מקדימה: ${ppl.length} אנשים`));
+        const pds = ppl.map((p) => p.projectData).filter(Boolean);
+        const extra = [
+          pds.length ? `${pds.filter((d) => d.reg || ((d.paidFull || d.paidAmount > 0) && pr.pricing.mode !== 'none')).length} יסומנו כנרשמים` : '',
+          mapping.includes('paidFull') ? `${pds.filter((d) => d.paidFull).length} יסומנו כשילמו הכול` : '',
+          mapping.includes('paidAmount') ? `${pds.filter((d) => d.paidAmount > 0).length} עם סכום ששולם` : '',
+        ].filter(Boolean).join(' · ');
+        clear(pv).appendChild(el('h3', null, `תצוגה מקדימה: ${ppl.length} אנשים` + (extra ? ' · ' + extra : '')));
         if (!ppl.length) { pv.appendChild(el('p', { class: 'neg' }, 'לא נמצאו שמות. ודאו שעמודה אחת לפחות משויכת ל"שם פרטי" או "שם משפחה".')); return; }
         pv.appendChild(el('div', { class: 'table-wrap', style: { maxHeight: '220px' } }, el('table', { class: 'data' },
           el('thead', null, el('tr', null, shown.map((f) => el('th', null, f.label)))),
@@ -131,7 +141,7 @@
             let col = db.columns.find((c) => c.name === title);
             if (!col) {
               const vals = analysis.rows.map((r) => (r[i] || '').trim()).filter(Boolean);
-              const isCheck = vals.length && vals.every((v) => /^[vVxX✓✔]$/.test(v));
+              const isCheck = vals.length && vals.every((v) => /^[vVxX✓✔]$|^כן$|^לא$/.test(v));
               col = { id: Logic.uid(), name: title, type: isCheck ? 'check' : 'text' };
               db.columns.push(col);
             }
@@ -141,6 +151,7 @@
           if (!incoming.length) { toast('לא נמצאו שמות לייבוא'); return false; }
           const before = new Set(db.people.map((p) => p.id));
           const r = Importer.merge(db.people, incoming);
+          const pd = Importer.applyProjectData(pr, incoming, r.targets, { date: UI.today() });
           if (regBox.checked) {
             // מסמנים את כל מי שבקובץ, גם מי שכבר היה ברשימה.
             const keys = new Set(incoming.map(Importer.personKey));
@@ -148,7 +159,9 @@
           }
           App.changed();
           const added = db.people.filter((p) => !before.has(p.id)).length;
-          toast(`יובאו ${added} חדשים, ${r.updated} עודכנו, ${r.same} כבר היו` + (regBox.checked ? ' · סומנו כנרשמים' : ''));
+          toast(`יובאו ${added} חדשים, ${r.updated} עודכנו, ${r.same} כבר היו` + (regBox.checked ? ' · סומנו כנרשמים' : '')
+            + (pd.registered ? ` · ${pd.registered} סומנו כנרשמים` : '') + (pd.payments ? ` · נרשמו ${pd.payments} תשלומים (${Logic.money(pd.paidSum)})` : '')
+            + (pd.unpriced ? ` · ${pd.unpriced} מסומנים "שולם" אבל אין להם מחיר - קודם קובעים מחיר בהגדרות` : ''));
         } },
         { label: 'ביטול' },
       ],

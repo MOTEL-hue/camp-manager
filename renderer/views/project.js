@@ -83,6 +83,8 @@
 
     const pidList = pr.products;
     const marks = pr.marks;
+    // עמודות סימון מרשימת האנשים (למשל "אישור" שיובא מאקסל) מוצגות גם כאן - אותו נתון בשני המקומות.
+    const pcols = pr.columns.filter((c) => c.type === 'check' && c.showInList !== false);
 
     function passes(p) {
       if (f.cls && (p.cls || '').trim() !== f.cls) return false;
@@ -112,6 +114,7 @@
         hasBase ? el('th', { class: 'center' }, pr.kind === 'sale' ? 'דמי השתתפות' : 'נרשם/ה') : null,
         pidList.map((x) => el('th', { class: 'center', title: L.money(x.price) }, x.name, el('div', { class: 'muted small' }, L.money(x.price)))),
         marks.map((m) => el('th', { class: 'center' }, m.name)),
+        pcols.map((c) => el('th', { class: 'center', title: 'עמודה מלשונית האנשים' }, c.name)),
         money ? [el('th', { class: 'num' }, 'הנחה'), el('th', { class: 'num' }, 'לתשלום'), el('th', { class: 'num' }, 'שולם'),
           el('th', { class: 'num' }, 'יתרה'), el('th', null, 'מצב')] : null, el('th', null, 'הערה'), money ? el('th', null, '') : null);
       const body = el('tbody');
@@ -139,6 +142,8 @@
           pidList.map((x) => el('td', { class: 'center' }, el('input', { type: 'number', min: 0, class: 'qty', value: (e.items || {})[x.id] || '', placeholder: '0',
             onchange: (ev) => touch((en) => { en.items[x.id] = Math.max(0, L.num(ev.target.value)); if (!en.items[x.id]) delete en.items[x.id]; }) }))),
           marks.map((m) => el('td', { class: 'center' }, el('input', { type: 'checkbox', checked: !!(e.marks || {})[m.id], onchange: (ev) => touch((en) => { en.marks[m.id] = ev.target.checked; }) }))),
+          pcols.map((c) => el('td', { class: 'center' }, el('input', { type: 'checkbox', checked: L.isYes((p.custom || {})[c.id]),
+            onchange: (ev) => { p.custom = p.custom || {}; p.custom[c.id] = ev.target.checked ? 'V' : ''; Store.commit(); updateFooter(); } }))),
           money ? [el('td', { class: 'num' }, el('input', { type: 'number', min: 0, class: 'qty', value: e.discount || '', placeholder: '0', title: 'הנחה בשקלים',
             onchange: (ev) => touch((en) => { en.discount = Math.max(0, L.num(ev.target.value)); }) })),
           cells.due = el('td', { class: 'num' }),
@@ -156,7 +161,7 @@
 
       if (f.family) {
         const fams = L.families(list).sort((a, b) => L.familyName(a).localeCompare(L.familyName(b), 'he'));
-        const span = 2 + (hasBase ? 1 : 0) + pidList.length + marks.length;
+        const span = 2 + (hasBase ? 1 : 0) + pidList.length + marks.length + pcols.length;
         // קודם משפחות עם כמה ילדים (עם שורת סיכום משפחתית), ואחריהן ילדים יחידים בלי כותרת.
         const multi = fams.filter((fam) => fam.length > 1);
         const singles = fams.filter((fam) => fam.length === 1).map((fam) => fam[0]);
@@ -193,6 +198,7 @@
           hasBase ? el('td', { class: 'center' }, regCount) : null,
           pidList.map((x) => el('td', { class: 'center' }, (s.products[x.id] || {}).qty || 0)),
           marks.map((m) => el('td', { class: 'center' }, list.filter((p) => ((L.enrollment(pr, p.id) || {}).marks || {})[m.id]).length)),
+          pcols.map((c) => el('td', { class: 'center' }, list.filter((p) => L.isYes((p.custom || {})[c.id])).length)),
           money ? [el('td'), el('td', { class: 'num' }, L.money(s.due)), el('td', { class: 'num' }, L.money(s.paid)),
             el('td', { class: 'num neg' }, L.money(s.balance)), el('td', null, s.counts.covered ? s.counts.covered + ' פטורים' : '')] : null, el('td'), money ? el('td') : null));
       }

@@ -21,6 +21,11 @@
 
   const PAYMENT_METHODS = ['מזומן', 'העברה בנקאית', 'צ\'ק', 'אשראי', 'ביט / פייבוקס', 'אחר'];
 
+  // ערך של עמודת סימון: V / ✓ / כן / 1 = מסומן. X או ריק = לא מסומן.
+  function isYes(v) {
+    return /^(v|✓|✔|כן|1|true|y|yes)$/i.test(String(v === null || v === undefined ? '' : v).trim());
+  }
+
   function uid() {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   }
@@ -383,7 +388,7 @@
   }
 
   return {
-    migrate, setProjects, coverage, coveredPart, grossDue, findMatch, LINK_CONDITIONS,
+    isYes, migrate, setProjects, coverage, coveredPart, grossDue, findMatch, LINK_CONDITIONS,
     PERSON_FIELDS, PAYMENT_METHODS, STATUS_LABEL,
     uid, num, round2, emptyDb, newProject, enrollment, ensureEnrollment,
     basePrice, isParticipant, amountDue, paidBy, status, personRow,

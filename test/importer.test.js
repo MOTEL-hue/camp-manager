@@ -94,3 +94,54 @@ test('העתקת אנשים מפרויקט אחר: עמודות לפי שם, נ�
   const noCols = I.copyPeople(src, srcCols, [], false);
   assert.deepStrictEqual(noCols[0].person.custom, {});
 });
+
+test('ייבוא לעמודות הפרויקט: נרשם, שולם הכול, סכום ששולם וסימון "אישור הורים"', () => {
+  const L = require('../renderer/logic.js');
+  const pr = L.newProject('קייטנה', 'camp');
+  pr.pricing = { mode: 'flat', flat: 170, groups: {} };
+  pr.marks = [{ id: 'm1', name: 'אישור הורים' }];
+  const rows = [
+    ['כיתה', 'שם משפחה', 'שם פרטי', 'נרשמה', 'שולם', 'אישור', 'סכום ששולם'],
+    ['א', 'כהן', 'רחל', 'V', 'V', 'V', ''],
+    ['א', 'לוי', 'שרה', 'V', '', 'X', 'שולם 50'],
+    ['א', 'גרין', 'לאה', '', '', '', ''],
+    ['א', 'פרץ', 'מרים', '', 'V', '', ''], // שילמה בלי סימון "נרשמה" - נחשבת כנרשמת
+  ];
+  const a = I.analyze(rows, { marks: pr.marks, products: [], columns: [] });
+  const t = a.columns.map((c) => c.target);
+  assert.deepStrictEqual(t, ['cls', 'lastName', 'firstName', 'reg', 'paidFull', 'mark:m1', 'paidAmount']);
+  const incoming = I.rowsToPeople(a, t, {});
+  assert.strictEqual(incoming[0].projectData.reg, true);
+  assert.strictEqual(JSON.stringify(incoming[0]).includes('projectData'), false, 'לא נשמר בפרטי האדם');
+  const m = I.merge(pr.people, incoming);
+  let r = I.applyProjectData(pr, incoming, m.targets, { date: '2026-10-07' });
+  assert.deepStrictEqual([r.registered, r.payments, r.paidSum], [3, 3, 390]);
+  const [rachel, sara, leah, miriam] = pr.people;
+  assert.strictEqual(L.personRow(pr, miriam).status, 'paid');
+  assert.strictEqual(L.personRow(pr, rachel).status, 'paid');
+  assert.deepStrictEqual([L.personRow(pr, sara).paid, L.personRow(pr, sara).balance], [50, 120]);
+  assert.strictEqual(pr.enrollments[rachel.id].marks.m1, true);
+  assert.ok(!pr.enrollments[sara.id].marks.m1, 'X = לא מסומן');
+  assert.ok(!L.isParticipant(pr, leah));
+
+  // ייבוא חוזר של אותו קובץ לא מכפיל תשלומים
+  const again = I.rowsToPeople(a, t, {});
+  const m2 = I.merge(pr.people, again);
+  r = I.applyProjectData(pr, again, m2.targets, {});
+  assert.deepStrictEqual([r.registered, r.payments, pr.payments.length], [0, 0, 3]);
+});
+
+test('"שולם הכול" בלי מחיר לא רושם תשלום ומדווח', () => {
+  const L = require('../renderer/logic.js');
+  const pr = L.newProject('קייטנה', 'camp');
+  const a = I.analyze([['שם פרטי', 'שם משפחה', 'שולם'], ['רחל', 'כהן', 'V']], { marks: [], products: [], columns: [] });
+  const inc = I.rowsToPeople(a, a.columns.map((c) => c.target), {});
+  const m = I.merge(pr.people, inc);
+  const r = I.applyProjectData(pr, inc, m.targets, {});
+  assert.deepStrictEqual([r.payments, r.unpriced], [0, 1]);
+});
+
+test('isYes: V/כן/✓ מסומן, X וריק לא', () => {
+  const L = require('../renderer/logic.js');
+  assert.deepStrictEqual(['V', 'v', ' ✓', 'כן', '1', 'X', 'x', '', null, 'לא'].map(L.isYes), [true, true, true, true, true, false, false, false, false, false]);
+});
