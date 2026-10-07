@@ -74,7 +74,7 @@ test('סיכום: סכומים, אמצעי תשלום, הוצאות ומזומן
   assert.strictEqual(s.due, 510);
   assert.strictEqual(s.paid, 220);
   assert.strictEqual(s.balance, 290);
-  assert.deepStrictEqual(s.counts, { paid: 1, partial: 1, unpaid: 1, over: 0 });
+  assert.deepStrictEqual(s.counts, { paid: 1, partial: 1, unpaid: 1, over: 0, covered: 0 });
   assert.strictEqual(s.byMethod['מזומן'], 170);
   assert.strictEqual(s.expenses, 140);
   assert.strictEqual(s.net, 80);
@@ -128,4 +128,53 @@ test('מעבר: רשימה כללית בלי פרויקטים נשמרת בפר�
   assert.strictEqual(db.projects[0].people[0].firstName, 'רחל');
   const empty = L.migrate({ people: [], projects: [] });
   assert.strictEqual(empty.projects.length, 0);
+});
+
+test('קישור לפרויקט "עירייה": מי שמופיע שם פטור, ואחרים משלמים רגיל', () => {
+  const city = L.newProject('רישום דרך העירייה', 'list');
+  city.people = [
+    { id: 'c1', firstName: 'רחל', lastName: 'כהן', cls: 'א' },
+    { id: 'c2', firstName: 'לאה', lastName: 'לוי', cls: '' }, // בלי כיתה - מספיק שם מלא
+  ];
+  const camp = L.newProject('קייטנה', 'camp');
+  camp.pricing = { mode: 'flat', flat: 170, groups: {} };
+  camp.people = [
+    { id: 'a', firstName: 'רחל', lastName: 'כהן', cls: 'א' },
+    { id: 'b', firstName: 'לאה', lastName: 'לוי', cls: 'ב' },
+    { id: 'd', firstName: 'שרה', lastName: 'כהן', cls: 'א' },
+    { id: 'e', firstName: 'רחל', lastName: 'כהן', cls: 'ב' }, // שם זהה בכיתה אחרת - לא אותה ילדה
+  ];
+  for (const p of camp.people) L.ensureEnrollment(camp, p.id).registered = true;
+  camp.links = [{ id: 'l', projectId: city.id, label: 'עירייה', condition: 'listed', cover: 'full' }];
+  L.setProjects([city, camp]);
+  const row = (id) => L.personRow(camp, camp.people.find((p) => p.id === id));
+  assert.deepStrictEqual([row('a').due, row('a').status, row('a').coverLabel], [0, 'covered', 'עירייה']);
+  assert.strictEqual(row('b').due, 0, 'בלי כיתה ברשימת העירייה - מתאים לפי שם');
+  assert.strictEqual(row('d').due, 170);
+  assert.strictEqual(row('e').due, 170);
+  const s = L.summary(camp, camp.people);
+  assert.strictEqual(s.due, 340);
+  assert.strictEqual(s.covered, 340);
+  assert.deepStrictEqual(s.coveredBy['עירייה'], { count: 2, amount: 340 });
+  assert.strictEqual(s.counts.covered, 2);
+});
+
+test('קישור עם תנאי "שילם שם" והנחה קבועה במקום פטור מלא', () => {
+  const mgr = L.newProject('רישום דרך המנהל', 'camp');
+  mgr.pricing = { mode: 'flat', flat: 50, groups: {} };
+  mgr.people = [{ id: 'm1', firstName: 'רחל', lastName: 'כהן', cls: 'א' }, { id: 'm2', firstName: 'שרה', lastName: 'לוי', cls: 'א' }];
+  L.ensureEnrollment(mgr, 'm1').registered = true;
+  L.ensureEnrollment(mgr, 'm2').registered = true;
+  mgr.payments.push({ personId: 'm1', amount: 50 });
+  const camp = L.newProject('קייטנה', 'camp');
+  camp.pricing = { mode: 'flat', flat: 170, groups: {} };
+  camp.people = [{ id: 'a', firstName: 'רחל', lastName: 'כהן', cls: 'א' }, { id: 'b', firstName: 'שרה', lastName: 'לוי', cls: 'א' }];
+  for (const p of camp.people) L.ensureEnrollment(camp, p.id).registered = true;
+  camp.links = [{ id: 'l', projectId: mgr.id, label: 'מנהל', condition: 'paid', cover: 'amount', amount: 100 }];
+  // קישור הפוך לא נתקע בלולאה
+  mgr.links = [{ id: 'x', projectId: camp.id, label: 'קייטנה', condition: 'paid', cover: 'full' }];
+  L.setProjects([mgr, camp]);
+  assert.strictEqual(L.amountDue(camp, camp.people[0]), 70, 'שילמה במנהל - הנחה של 100');
+  assert.strictEqual(L.amountDue(camp, camp.people[1]), 170, 'לא שילמה במנהל');
+  L.setProjects([]);
 });

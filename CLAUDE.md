@@ -17,6 +17,10 @@
 - הנתונים הם אובייקט JSON אחד (`Store.db`): `settings` ו-`projects`. לכל פרויקט רשימת אנשים משלו:
   `people`, `columns` (עמודות מותאמות), `hiddenFields`, ובנוסף `pricing`, `products`, `marks`,
   `enrollments` (לפי מזהה אדם), `payments`, `expenses`. העתקה בין פרויקטים: `Importer.copyPeople`.
+- קישור בין פרויקטים (`project.links`): `Logic.coverage` מוצא את האדם בפרויקט המקושר לפי שם+כיתה.
+  החישוב צריך את כל הפרויקטים, ולכן `Logic.setProjects` נקרא ב-`Store.commit` וב-`App.render`.
+- עדכון אוטומטי: בגרסה המותקנת `electron-updater`; בגרסה הניידת `setupPortableUpdater` ב-`main.js`
+  מוריד את ה-EXE החדש ומחליף אותו ב-PowerShell כשהתוכנה נסגרת.
 - `Logic.migrate` מעדכן קבצים ישנים (כולל המעבר מרשימה כללית לרשימה לכל פרויקט).
 - אחרי כל שינוי ב-`Store.db` קוראים ל-`Store.commit()` (שומר ומאפשר Ctrl+Z), או ל-`App.changed()`
   כשצריך לצייר את המסך מחדש.

@@ -10,6 +10,7 @@
       this.render();
     },
     render() {
+      Logic.setProjects(Store.db.projects);
       renderNav();
       const main = clear(document.getElementById('main'));
       const r = this.route;
@@ -55,11 +56,11 @@
         box.appendChild(document.createTextNode('מוריד גרסה חדשה... ' + (s.percent || 0) + '%'));
       } else if (s.state === 'ready') {
         box.classList.remove('hidden');
-        box.appendChild(document.createTextNode('גרסה ' + s.version + ' מוכנה. היא תותקן כשתסגור את התוכנה.'));
+        box.appendChild(document.createTextNode('גרסה ' + s.version + ' מוכנה. היא תותקן לבד כשתסגור את התוכנה.'));
         box.appendChild(el('button', { class: 'btn small primary', onclick: async () => { await Store.flush(); window.api.installUpdate(); } }, 'עדכן עכשיו'));
       } else if (s.state === 'portable') {
         box.classList.remove('hidden');
-        box.appendChild(document.createTextNode('יש גרסה חדשה (' + s.version + '). מורידים את הקובץ החדש ומחליפים את הישן; הנתונים נשארים בתיקייה.'));
+        box.appendChild(document.createTextNode('יש גרסה חדשה (' + s.version + '). אפשר להוריד אותה מכאן ולהחליף את הקובץ; הנתונים נשארים.'));
         box.appendChild(el('button', { class: 'btn small primary', onclick: () => window.open(s.url) }, 'להורדה'));
       } else {
         box.classList.add('hidden');

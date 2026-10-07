@@ -47,15 +47,16 @@
     return {
       id: uid(),
       name: name || 'פרויקט חדש',
-      kind: kind || 'camp', // camp = רישום במחיר קבוע, sale = מכירת מוצרים
+      kind: kind || 'camp', // camp = רישום במחיר קבוע, sale = מכירת מוצרים, list = רשימה בלבד (למשל רישום דרך העירייה)
       createdAt: new Date().toISOString(),
       archived: false,
       // לכל פרויקט רשימת אנשים ועמודות משלו. אפשר להעתיק רשימה מפרויקט אחר.
       people: [],
       columns: [],
       hiddenFields: [],
+      links: [], // [{id, projectId, label, condition, cover: 'full'|'amount', amount}]
       // מחיר הרישום: none (אין), flat (שווה לכולם), group (לפי כיתה/קבוצה)
-      pricing: { mode: kind === 'sale' ? 'none' : 'flat', flat: 0, groups: {} },
+      pricing: { mode: kind === 'camp' || !kind ? 'flat' : 'none', flat: 0, groups: {} },
       products: [],
       marks: [], // עמודות סימון נוספות לפרויקט, למשל "אישור הורים"
       enrollments: {},
@@ -95,7 +96,69 @@
     return Object.values(e.items || {}).some((q) => num(q) > 0);
   }
 
-  function amountDue(project, person) {
+  // קישור בין פרויקטים: מי שמופיע/נרשם/שילם בפרויקט מקושר (למשל "רישום דרך העירייה") פטור
+  // מתשלום כאן, או מקבל הנחה קבועה. כל הפרויקטים נמסרים ב-setProjects, כי החישוב צריך לראות גם אותם.
+  let ALL = [];
+  let indexCache = new Map();
+  const resolving = new Set();
+
+  function setProjects(list) {
+    ALL = list || [];
+    indexCache = new Map();
+  }
+
+  function nameKey(p, withClass) {
+    const n = (x) => String(x || '').replace(/\s+/g, '').trim();
+    return n(p.firstName) + '|' + n(p.lastName) + (withClass ? '|' + n(p.cls) : '');
+  }
+
+  // אותו שם פרטי, משפחה וכיתה; אם באחד הצדדים אין כיתה - מספיק שם מלא, כל עוד הוא יחיד ברשימה.
+  function findMatch(src, person) {
+    let idx = indexCache.get(src.id);
+    if (!idx) {
+      idx = { full: new Map(), name: new Map() };
+      for (const p of src.people || []) {
+        const fk = nameKey(p, true), nk = nameKey(p, false);
+        if (!idx.full.has(fk)) idx.full.set(fk, p);
+        idx.name.set(nk, idx.name.has(nk) ? null : p);
+      }
+      indexCache.set(src.id, idx);
+    }
+    if (nameKey(person, false) === '|') return null;
+    const hit = idx.full.get(nameKey(person, true));
+    if (hit) return hit;
+    const byName = idx.name.get(nameKey(person, false));
+    if (byName && (!String(person.cls || '').trim() || !String(byName.cls || '').trim())) return byName;
+    return null;
+  }
+
+  const LINK_CONDITIONS = [
+    ['listed', 'מופיע/ה ברשימה שם'],
+    ['registered', 'נרשם/ה או השתתף/ה שם'],
+    ['paid', 'שילם/ה שם הכול'],
+  ];
+
+  function coverage(project, person) {
+    if (!project.links || !project.links.length || resolving.has(project.id)) return null;
+    resolving.add(project.id);
+    try {
+      for (const link of project.links) {
+        const src = ALL.find((x) => x.id === link.projectId);
+        if (!src || src === project) continue;
+        const m = findMatch(src, person);
+        if (!m) continue;
+        let ok = link.condition === 'listed';
+        if (link.condition === 'registered') ok = isParticipant(src, m);
+        if (link.condition === 'paid') { const r = personRow(src, m); ok = r.status === 'paid' || r.status === 'over'; }
+        if (ok) return { label: link.label || src.name, full: link.cover !== 'amount', amount: num(link.amount) };
+      }
+      return null;
+    } finally {
+      resolving.delete(project.id);
+    }
+  }
+
+  function grossDue(project, person) {
     const e = enrollment(project, person.id);
     if (!e) return 0;
     if (e.override !== null && e.override !== undefined && e.override !== '') return round2(num(e.override));
@@ -106,6 +169,20 @@
     }
     total -= num(e.discount);
     return round2(Math.max(0, total));
+  }
+
+  // כמה מכוסה דרך פרויקט מקושר, ועל ידי מי.
+  function coveredPart(project, person) {
+    const gross = grossDue(project, person);
+    if (gross <= 0) return { gross, covered: 0, label: '' };
+    const c = coverage(project, person);
+    if (!c) return { gross, covered: 0, label: '' };
+    return { gross, covered: round2(c.full ? gross : Math.min(gross, c.amount)), label: c.label };
+  }
+
+  function amountDue(project, person) {
+    const c = coveredPart(project, person);
+    return round2(c.gross - c.covered);
   }
 
   function paidBy(project, personId) {
@@ -121,12 +198,15 @@
     return 'unpaid';
   }
 
-  const STATUS_LABEL = { none: '—', paid: 'שולם', over: 'שולם ביתר', partial: 'שולם חלקית', unpaid: 'לא שולם' };
+  const STATUS_LABEL = { none: '—', paid: 'שולם', over: 'שולם ביתר', partial: 'שולם חלקית', unpaid: 'לא שולם', covered: 'פטור' };
 
   function personRow(project, person) {
-    const due = amountDue(project, person);
+    const c = coveredPart(project, person);
+    const due = round2(c.gross - c.covered);
     const paid = paidBy(project, person.id);
-    return { due, paid, balance: round2(due - paid), status: status(due, paid), participant: isParticipant(project, person) };
+    let st = status(due, paid);
+    if (c.covered > 0 && due <= 0 && paid <= 0) st = 'covered';
+    return { due, paid, balance: round2(due - paid), status: st, participant: isParticipant(project, person), gross: c.gross, covered: c.covered, coverLabel: c.label };
   }
 
   // ספרות בלבד, ובלי קידומת בינלאומית, כדי ש-"050-1234567" ו-"+972501234567" יהיו אותו מספר.
@@ -177,7 +257,8 @@
   function summary(project, people) {
     const s = {
       participants: 0, due: 0, paid: 0, balance: 0, overpaid: 0,
-      counts: { paid: 0, partial: 0, unpaid: 0, over: 0 },
+      counts: { paid: 0, partial: 0, unpaid: 0, over: 0, covered: 0 },
+      covered: 0, coveredBy: {},
       byMethod: {}, byGroup: {}, products: {}, delivered: 0,
       expenses: 0, expensesByMethod: {},
     };
@@ -191,6 +272,12 @@
       if (r.balance > 0) s.balance += r.balance;
       else s.overpaid += -r.balance;
       if (s.counts[r.status] !== undefined) s.counts[r.status]++;
+      if (r.covered > 0) {
+        s.covered += r.covered;
+        const cb = s.coveredBy[r.coverLabel] || (s.coveredBy[r.coverLabel] = { count: 0, amount: 0 });
+        cb.count++;
+        cb.amount = round2(cb.amount + r.covered);
+      }
       const g = (person.cls || 'ללא קבוצה').toString().trim() || 'ללא קבוצה';
       const bg = s.byGroup[g] || (s.byGroup[g] = { participants: 0, due: 0, paid: 0, balance: 0 });
       if (r.participant) bg.participants++;
@@ -223,6 +310,7 @@
     s.paid = round2(s.paid);
     s.balance = round2(s.balance);
     s.overpaid = round2(s.overpaid);
+    s.covered = round2(s.covered);
     s.expenses = round2(s.expenses);
     s.net = round2(s.paid - s.expenses); // מה שיש בפועל
     s.expectedNet = round2(s.due - s.expenses); // מה שיהיה כשכולם ישלמו
@@ -295,7 +383,7 @@
   }
 
   return {
-    migrate,
+    migrate, setProjects, coverage, coveredPart, grossDue, findMatch, LINK_CONDITIONS,
     PERSON_FIELDS, PAYMENT_METHODS, STATUS_LABEL,
     uid, num, round2, emptyDb, newProject, enrollment, ensureEnrollment,
     basePrice, isParticipant, amountDue, paidBy, status, personRow,

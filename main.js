@@ -129,16 +129,87 @@ function newerVersion(a, b) {
   return false;
 }
 
-// גרסה ניידת לא יכולה להחליף את עצמה בזמן ריצה, ולכן רק מודיעים שיש גרסה חדשה ומפנים להורדה.
-function setupPortableUpdateCheck() {
+// גרסה ניידת: electron-updater לא תומך בה, ולכן מורידים לבד את קובץ ה-EXE החדש לתיקייה שליד הקובץ,
+// וכשהתוכנה נסגרת סקריפט PowerShell קטן מחליף את הקובץ (מחכה שהקובץ הישן ישתחרר) ומפעיל מחדש.
+// הנתונים בתיקייה שליד הקובץ לא נוגעים בהם.
+function setupPortableUpdater() {
+  const exePath = process.env.PORTABLE_EXECUTABLE_FILE;
+  const send = (state, extra) => win && win.webContents.send('update:status', Object.assign({ state }, extra || {}));
+  let downloading = false;
+  let ready = null; // {version, file}
+
+  async function download(asset, version) {
+    const target = path.join(PORTABLE_DIR, '.camp-manager-update-' + version + '.exe');
+    if (fs.existsSync(target) && fs.statSync(target).size === asset.size) return target;
+    const res = await net.fetch(asset.browser_download_url);
+    if (!res.ok || !res.body) throw new Error('הורדה נכשלה: ' + res.status);
+    const tmp = target + '.part';
+    const out = fs.createWriteStream(tmp);
+    const reader = res.body.getReader();
+    let got = 0, lastPct = -1;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        got += value.length;
+        if (!out.write(Buffer.from(value))) await new Promise((r) => out.once('drain', r));
+        const pct = Math.floor((got / asset.size) * 100);
+        if (pct !== lastPct) { lastPct = pct; send('downloading', { percent: pct }); }
+      }
+    } finally {
+      await new Promise((r) => out.end(r));
+    }
+    // קובץ חסר (חיבור שנקטע) לא מחליף את התוכנה.
+    if (fs.statSync(tmp).size !== asset.size) { fs.unlinkSync(tmp); throw new Error('ההורדה לא הושלמה'); }
+    fs.renameSync(tmp, target);
+    return target;
+  }
+
   const check = async () => {
+    if (downloading || ready || !exePath) return;
     try {
       const res = await net.fetch('https://api.github.com/repos/MOTEL-hue/camp-manager/releases/latest', { headers: { 'User-Agent': 'camp-manager' } });
       if (!res.ok) return;
-      const latest = String((await res.json()).tag_name || '').replace(/^v/, '');
-      if (latest && newerVersion(latest, app.getVersion()) && win) win.webContents.send('update:status', { state: 'portable', version: latest, url: RELEASES_URL });
-    } catch (_) { /* בלי אינטרנט - מנסים שוב אחר כך */ }
+      const rel = await res.json();
+      const latest = String(rel.tag_name || '').replace(/^v/, '');
+      if (!latest || !newerVersion(latest, app.getVersion())) { send('none'); return; }
+      const asset = (rel.assets || []).find((a) => /portable.*\.exe$/i.test(a.name));
+      if (!asset) { send('portable', { version: latest, url: RELEASES_URL }); return; }
+      downloading = true;
+      send('available', { version: latest });
+      const file = await download(asset, latest);
+      ready = { version: latest, file };
+      send('ready', { version: latest });
+    } catch (err) {
+      send('error', { message: String(err && err.message || err) });
+    } finally {
+      downloading = false;
+    }
   };
+
+  function applyOnExit(relaunch) {
+    if (!ready || !exePath) return;
+    const script = [
+      '$n = $env:CM_NEW; $o = $env:CM_OLD',
+      'for ($i = 0; $i -lt 240; $i++) {',
+      '  try { Move-Item -LiteralPath $n -Destination $o -Force -ErrorAction Stop; break } catch { Start-Sleep -Milliseconds 500 }',
+      '}',
+      'if ($env:CM_RELAUNCH -eq "1") { Start-Process -FilePath $o }',
+    ].join('\n');
+    const env = Object.assign({}, process.env, { CM_NEW: ready.file, CM_OLD: exePath, CM_RELAUNCH: relaunch ? '1' : '0' });
+    // משתני הגרסה הניידת שייכים לתהליך הנוכחי; המופע החדש יקבל משלו.
+    delete env.PORTABLE_EXECUTABLE_DIR;
+    delete env.PORTABLE_EXECUTABLE_FILE;
+    delete env.PORTABLE_EXECUTABLE_APP_FILENAME;
+    const child = require('child_process').spawn('powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-Command', script],
+      { detached: true, stdio: 'ignore', windowsHide: true, env });
+    child.unref();
+    ready = null;
+  }
+
+  app.on('will-quit', () => applyOnExit(false));
+  ipcMain.handle('update:install', () => { applyOnExit(true); app.quit(); });
   ipcMain.handle('update:check', check);
   setTimeout(check, 5000);
   setInterval(check, 2 * 60 * 60 * 1000);
@@ -146,7 +217,7 @@ function setupPortableUpdateCheck() {
 
 function setupUpdater() {
   if (!app.isPackaged) return;
-  if (PORTABLE_DIR) return setupPortableUpdateCheck();
+  if (PORTABLE_DIR) return setupPortableUpdater();
   let autoUpdater;
   try { ({ autoUpdater } = require('electron-updater')); } catch (_) { return; }
   autoUpdater.autoDownload = true;

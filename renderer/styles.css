@@ -134,6 +134,7 @@ tr.dim td input { color: #9aa1b1; }
 .pill.partial { background: var(--warn-soft); color: var(--warn); }
 .pill.unpaid { background: var(--bad-soft); color: var(--bad); }
 .pill.none { color: var(--muted); }
+.pill.covered { background: #efe8fd; color: #6b3fd1; }
 .neg { color: var(--bad); font-weight: 600; }
 .pos { color: var(--ok); font-weight: 600; }
 

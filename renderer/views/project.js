@@ -34,9 +34,10 @@
       el('button', { class: 'btn ghost', onclick: () => App.go('projects'), title: 'לכל הפרויקטים' }, '→'),
       el('div', null, el('div', { class: 'muted small' }, Views.KIND_LABEL[pr.kind] + (pr.archived ? ' · בארכיון' : '')), el('h1', null, pr.name)),
       el('div', { class: 'grow' }),
-      el('button', { class: 'btn', onclick: () => paymentDialog(pr) }, '💰 תשלום חדש'),
+      pr.kind === 'list' ? null : el('button', { class: 'btn', onclick: () => paymentDialog(pr) }, '💰 תשלום חדש'),
       el('button', { class: 'btn', onclick: () => exportProject(pr) }, '📤 ייצוא לאקסל')));
-    main.appendChild(el('div', { class: 'tabs' }, TABS.map(([k, l]) =>
+    const hide = pr.kind === 'list' ? ['payments', 'expenses', 'supply'] : [];
+    main.appendChild(el('div', { class: 'tabs' }, TABS.filter(([k]) => !hide.includes(k)).map(([k, l]) => [k, pr.kind === 'list' && k === 'list' ? '📋 מי רשום' : l]).map(([k, l]) =>
       el('button', { class: 'tab' + (k === tab ? ' active' : ''), onclick: () => App.go('project', { id: pr.id, tab: k }) }, l))));
     const body = el('div');
     main.appendChild(body);
@@ -46,7 +47,10 @@
   // ---------- רישום ורכישות ----------
   function listTab(root, pr) {
     const f = F(pr);
-    const hasBase = pr.pricing.mode !== 'none';
+    // פרויקט מסוג "רשימה" (למשל רישום דרך העירייה): רק מי רשום וסימונים, בלי כסף.
+    const isList = pr.kind === 'list';
+    const hasBase = pr.pricing.mode !== 'none' || isList;
+    const money = !isList;
     if (!hasBase && !pr.products.length) {
       root.appendChild(el('div', { class: 'card empty' },
         el('div', { class: 'big' }, '⚙️'),
@@ -68,7 +72,7 @@
     const clsSel = select([['', 'כל הכיתות'], ...classes], f.cls);
     const showSel = select([
       ['all', 'כולם'], ['in', 'רק משתתפים'], ['out', 'לא משתתפים'],
-      ['unpaid', 'לא שילמו'], ['partial', 'שילמו חלקית'], ['debt', 'כל מי שחייב'], ['paid', 'שילמו הכול'],
+      ['unpaid', 'לא שילמו'], ['partial', 'שילמו חלקית'], ['debt', 'כל מי שחייב'], ['paid', 'שילמו הכול'], ['covered', 'פטורים / מכוסים מפרויקט מקושר'],
     ], f.show);
     const famBox = el('input', { type: 'checkbox', checked: f.family });
     const info = el('span', { class: 'muted small' });
@@ -95,6 +99,7 @@
         case 'partial': return r.status === 'partial';
         case 'debt': return r.balance > 0;
         case 'paid': return r.status === 'paid' || r.status === 'over';
+        case 'covered': return r.covered > 0;
       }
       return true;
     }
@@ -107,8 +112,8 @@
         hasBase ? el('th', { class: 'center' }, pr.kind === 'sale' ? 'דמי השתתפות' : 'נרשם/ה') : null,
         pidList.map((x) => el('th', { class: 'center', title: L.money(x.price) }, x.name, el('div', { class: 'muted small' }, L.money(x.price)))),
         marks.map((m) => el('th', { class: 'center' }, m.name)),
-        el('th', { class: 'num' }, 'הנחה'), el('th', { class: 'num' }, 'לתשלום'), el('th', { class: 'num' }, 'שולם'),
-        el('th', { class: 'num' }, 'יתרה'), el('th', null, 'מצב'), el('th', null, 'הערה'), el('th', null, ''));
+        money ? [el('th', { class: 'num' }, 'הנחה'), el('th', { class: 'num' }, 'לתשלום'), el('th', { class: 'num' }, 'שולם'),
+          el('th', { class: 'num' }, 'יתרה'), el('th', null, 'מצב')] : null, el('th', null, 'הערה'), money ? el('th', null, '') : null);
       const body = el('tbody');
 
       const addRow = (p) => {
@@ -116,11 +121,14 @@
         const cells = {};
         const recalc = () => {
           const r = L.personRow(pr, p);
+          if (!money) { tr.classList.toggle('dim', !r.participant); return; }
           cells.due.textContent = r.due ? L.money(r.due) : '';
           cells.paid.textContent = r.paid ? L.money(r.paid) : '';
           cells.bal.textContent = r.balance ? L.money(r.balance) : '';
           cells.bal.className = 'num ' + (r.balance > 0 ? 'neg' : r.balance < 0 ? 'pos' : '');
-          clear(cells.st).appendChild(pill(r.status));
+          clear(cells.st).appendChild(r.status === 'covered' || r.covered
+            ? el('span', { class: 'pill covered', title: `${L.money(r.covered)} מכוסה דרך "${r.coverLabel}"` }, (r.status === 'covered' ? 'פטור · ' : 'הנחה · ') + r.coverLabel)
+            : pill(r.status));
           tr.classList.toggle('dim', !r.participant && !r.paid);
         };
         const touch = (fn) => { const en = L.ensureEnrollment(pr, p.id); fn(en); Store.commit(); recalc(); updateFooter(); };
@@ -131,17 +139,17 @@
           pidList.map((x) => el('td', { class: 'center' }, el('input', { type: 'number', min: 0, class: 'qty', value: (e.items || {})[x.id] || '', placeholder: '0',
             onchange: (ev) => touch((en) => { en.items[x.id] = Math.max(0, L.num(ev.target.value)); if (!en.items[x.id]) delete en.items[x.id]; }) }))),
           marks.map((m) => el('td', { class: 'center' }, el('input', { type: 'checkbox', checked: !!(e.marks || {})[m.id], onchange: (ev) => touch((en) => { en.marks[m.id] = ev.target.checked; }) }))),
-          el('td', { class: 'num' }, el('input', { type: 'number', min: 0, class: 'qty', value: e.discount || '', placeholder: '0', title: 'הנחה בשקלים',
+          money ? [el('td', { class: 'num' }, el('input', { type: 'number', min: 0, class: 'qty', value: e.discount || '', placeholder: '0', title: 'הנחה בשקלים',
             onchange: (ev) => touch((en) => { en.discount = Math.max(0, L.num(ev.target.value)); }) })),
           cells.due = el('td', { class: 'num' }),
           cells.paid = el('td', { class: 'num' }),
           cells.bal = el('td', { class: 'num' }),
-          cells.st = el('td'),
+          cells.st = el('td')] : null,
           el('td', null, el('input', { type: 'text', value: e.note || '', placeholder: '', style: { minWidth: '120px' }, onchange: (ev) => touch((en) => { en.note = ev.target.value.trim(); }) })),
-          el('td', null,
+          money ? el('td', null,
             el('button', { class: 'btn small', title: 'רישום תשלום', onclick: () => paymentDialog(pr, p) }, '💰'),
             ' ',
-            el('button', { class: 'btn small', title: 'קבלה / פירוט', onclick: () => receiptDialog(pr, p) }, '🧾')));
+            el('button', { class: 'btn small', title: 'קבלה / פירוט', onclick: () => receiptDialog(pr, p) }, '🧾')) : null);
         recalc();
         body.appendChild(tr);
       };
@@ -153,6 +161,11 @@
         const multi = fams.filter((fam) => fam.length > 1);
         const singles = fams.filter((fam) => fam.length === 1).map((fam) => fam[0]);
         for (const fam of multi) {
+          if (!money) {
+            body.appendChild(el('tr', { class: 'group-head' }, el('td', { colspan: 99 }, '👪 ' + L.familyName(fam) + ` (${fam.length})`)));
+            fam.forEach(addRow);
+            continue;
+          }
           const due = fam.reduce((s, m) => s + L.amountDue(pr, m), 0);
           const paid = fam.reduce((s, m) => s + L.paidBy(pr, m.id), 0);
           body.appendChild(el('tr', { class: 'group-head' },
@@ -180,8 +193,8 @@
           hasBase ? el('td', { class: 'center' }, regCount) : null,
           pidList.map((x) => el('td', { class: 'center' }, (s.products[x.id] || {}).qty || 0)),
           marks.map((m) => el('td', { class: 'center' }, list.filter((p) => ((L.enrollment(pr, p.id) || {}).marks || {})[m.id]).length)),
-          el('td'), el('td', { class: 'num' }, L.money(s.due)), el('td', { class: 'num' }, L.money(s.paid)),
-          el('td', { class: 'num neg' }, L.money(s.balance)), el('td'), el('td'), el('td')));
+          money ? [el('td'), el('td', { class: 'num' }, L.money(s.due)), el('td', { class: 'num' }, L.money(s.paid)),
+            el('td', { class: 'num neg' }, L.money(s.balance)), el('td', null, s.counts.covered ? s.counts.covered + ' פטורים' : '')] : null, el('td'), money ? el('td') : null));
       }
     }
 
@@ -360,6 +373,7 @@
       kpi('סה"כ לתשלום', L.money(s.due), 'של כל המשתתפים', 'accent'),
       kpi('שולם', L.money(s.paid), pct + '% מהסכום', 'ok'),
       kpi('נשאר לגבות', L.money(s.balance), s.overpaid ? 'שולם ביתר: ' + L.money(s.overpaid) : null, s.balance ? 'bad' : 'ok'),
+      s.covered ? kpi('מכוסה דרך פרויקטים מקושרים', L.money(s.covered), Object.entries(s.coveredBy).map(([l, v]) => `${l}: ${v.count} (${L.money(v.amount)})`).join(' · '), 'accent') : null,
       kpi('הוצאות', L.money(s.expenses)),
       kpi('מאזן עכשיו', L.money(s.net), 'שולם פחות הוצאות', s.net >= 0 ? 'ok' : 'bad'),
       kpi('מאזן צפוי', L.money(s.expectedNet), 'כשכולם ישלמו', 'accent'),
@@ -444,8 +458,9 @@
   // ---------- הגדרות ----------
   function settingsTab(root, pr) {
     const db = Store.db;
+    const isListKind = pr.kind === 'list';
     const name = el('input', { type: 'text', value: pr.name, onchange: (e) => { pr.name = e.target.value.trim() || pr.name; App.changed(); } });
-    const kind = select([['camp', 'קייטנה / רישום'], ['sale', 'מכירת מוצרים']], pr.kind, { onchange: (e) => { pr.kind = e.target.value; App.changed(); } });
+    const kind = select([['camp', 'קייטנה / רישום'], ['sale', 'מכירת מוצרים'], ['list', 'רשימה בלבד (למשל רישום דרך עירייה / מנהל)']], pr.kind, { onchange: (e) => { pr.kind = e.target.value; App.changed(); } });
     root.appendChild(el('div', { class: 'card', style: { marginBottom: '14px' } }, el('h3', null, 'כללי'),
       el('div', { class: 'form-row' }, field('שם הפרויקט', name), field('סוג', kind)),
       field('הערות לפרויקט', el('textarea', { value: pr.notes || '', onchange: (e) => { pr.notes = e.target.value; Store.commit(); } }))));
@@ -464,7 +479,7 @@
         el('input', { type: 'number', min: 0, step: 'any', value: pr.pricing.groups[c] === undefined ? '' : pr.pricing.groups[c], placeholder: String(pr.pricing.flat || 0),
           onchange: (e) => { if (e.target.value === '') delete pr.pricing.groups[c]; else pr.pricing.groups[c] = L.num(e.target.value); Store.commit(); } })))));
     }
-    root.appendChild(priceCard);
+    if (!isListKind) root.appendChild(priceCard);
 
     // מוצרים
     const prodCard = el('div', { class: 'card', style: { marginBottom: '14px' } }, el('h3', null, pr.kind === 'sale' ? 'רשימת מוצרים ומחירים' : 'תוספות בתשלום (לא חובה, למשל: טיול, חולצה)'));
@@ -491,7 +506,39 @@
     pName.id = 'add-prod-name';
     for (const i of [pName, pPrice]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') addProd(); });
     prodCard.appendChild(el('div', { class: 'toolbar' }, pName, pPrice, '₪', el('button', { class: 'btn primary', onclick: addProd }, 'הוסף')));
-    root.appendChild(prodCard);
+    if (!isListKind) root.appendChild(prodCard);
+
+    // קישור לפרויקטים אחרים
+    const others = db.projects.filter((x) => x !== pr);
+    const linksCard = el('div', { class: 'card', style: { marginBottom: '14px' } }, el('h3', null, '🔗 קישור לפרויקטים אחרים (פטור / מימון)'),
+      el('p', { class: 'muted small' }, 'למשל: מי שרשום/ה בפרויקט "רישום דרך העירייה" או "רישום דרך המנהל" לא משלם/ת כאן, או מקבל/ת הנחה. ההתאמה לפי שם פרטי, שם משפחה וכיתה (ואם אין כיתה באחת הרשימות - לפי שם מלא).'));
+    if (!others.length) linksCard.appendChild(el('p', { class: 'muted' }, 'צריך קודם ליצור פרויקט נוסף (למשל מסוג "רשימה בלבד") ולהכניס אליו את הרשימה.'));
+    for (const link of pr.links) {
+      const src = db.projects.find((x) => x.id === link.projectId);
+      const amount = el('input', { type: 'number', min: 0, step: 'any', value: link.amount || '', placeholder: 'סכום', style: { width: '100px' }, class: link.cover === 'amount' ? '' : 'hidden',
+        onchange: (e) => { link.amount = L.num(e.target.value); Store.commit(); } });
+      linksCard.appendChild(el('div', { class: 'toolbar' },
+        el('span', null, 'מי ש'),
+        select(L.LINK_CONDITIONS, link.condition, { onchange: (e) => { link.condition = e.target.value; Store.commit(); } }),
+        el('span', null, 'ב'),
+        el('strong', null, src ? src.name : '(פרויקט שנמחק)'),
+        el('span', null, '←'),
+        select([['full', 'פטור מלא'], ['amount', 'הנחה של סכום קבוע']], link.cover, { onchange: (e) => { link.cover = e.target.value; amount.classList.toggle('hidden', link.cover !== 'amount'); Store.commit(); } }),
+        amount,
+        el('span', null, 'כיתוב:'),
+        el('input', { type: 'text', value: link.label || '', placeholder: 'למשל: עירייה', style: { width: '130px' }, onchange: (e) => { link.label = e.target.value.trim(); Store.commit(); } }),
+        el('button', { class: 'btn small danger', onclick: () => { pr.links = pr.links.filter((y) => y !== link); App.changed(); } }, 'הסר')));
+    }
+    if (others.length) {
+      const srcSel = select(others.slice().reverse().map((x) => [x.id, x.name]), '');
+      linksCard.appendChild(el('div', { class: 'toolbar', style: { marginTop: '10px' } }, el('span', null, 'קישור חדש ל:'), srcSel,
+        el('button', { class: 'btn primary', onclick: () => {
+          const src = db.projects.find((x) => x.id === srcSel.value);
+          pr.links.push({ id: L.uid(), projectId: src.id, label: src.name, condition: src.kind === 'list' ? 'listed' : 'registered', cover: 'full', amount: 0 });
+          App.changed();
+        } }, 'הוסף קישור')));
+    }
+    if (!isListKind) root.appendChild(linksCard);
 
     // סימונים
     const marksCard = el('div', { class: 'card', style: { marginBottom: '14px' } }, el('h3', null, 'עמודות סימון בפרויקט'),
@@ -537,7 +584,8 @@
       famPaid ? el('p', { class: 'small' }, 'התשלום כולל את: ' + thisPay.map((x) => L.fullName(personById(x.personId) || {})).join(', ')) : null,
       lines.length ? el('table', null, el('thead', null, el('tr', null, el('th', null, 'פריט'), el('th', null, 'כמות'), el('th', null, 'מחיר'), el('th', null, 'סה"כ'))),
         el('tbody', null, lines.map(([n, q, pz]) => el('tr', null, el('td', null, n), el('td', null, q), el('td', null, L.money(pz)), el('td', null, L.money(q * pz)))),
-          L.num(e.discount) ? el('tr', null, el('td', { colspan: 3 }, 'הנחה'), el('td', null, '-' + L.money(e.discount))) : null)) : null,
+          L.num(e.discount) ? el('tr', null, el('td', { colspan: 3 }, 'הנחה'), el('td', null, '-' + L.money(e.discount))) : null,
+          r.covered ? el('tr', null, el('td', { colspan: 3 }, 'מכוסה דרך ' + r.coverLabel), el('td', null, '-' + L.money(r.covered))) : null)) : null,
       pays.length ? el('table', null, el('thead', null, el('tr', null, el('th', null, 'תאריך'), el('th', null, 'תשלום'), el('th', null, 'אמצעי'), el('th', null, 'קבלה'))),
         el('tbody', null, pays.map((x) => el('tr', null, el('td', null, fmtDate(x.date)), el('td', null, L.money(x.amount)), el('td', null, x.method || ''), el('td', null, x.receiptNo || ''))))) : null,
       el('p', { class: 'r-total' }, `סה"כ לתשלום: ${L.money(r.due)} · שולם: ${L.money(r.paid)} · ` + (r.balance > 0 ? `נשאר: ${L.money(r.balance)}` : r.balance < 0 ? `זיכוי: ${L.money(-r.balance)}` : 'שולם במלואו ✓')),
@@ -599,7 +647,7 @@
     if (pr.pricing.mode !== 'none') head.push(pr.kind === 'sale' ? 'דמי השתתפות' : 'נרשם/ה');
     pr.products.forEach((x) => head.push(x.name));
     pr.marks.forEach((m) => head.push(m.name));
-    head.push('הנחה', 'לתשלום', 'שולם', 'יתרה', 'מצב', 'הערה');
+    head.push('הנחה', 'פטור / מימון', 'לתשלום', 'שולם', 'יתרה', 'מצב', 'הערה');
     const list = [head];
     for (const p of ppl) {
       const r = L.personRow(pr, p);
@@ -609,7 +657,7 @@
       if (pr.pricing.mode !== 'none') row.push(e.registered ? 'V' : '');
       pr.products.forEach((x) => row.push(L.num((e.items || {})[x.id]) || ''));
       pr.marks.forEach((m) => row.push((e.marks || {})[m.id] ? 'V' : ''));
-      row.push(L.num(e.discount) || '', r.due, r.paid, r.balance, L.STATUS_LABEL[r.status], e.note || '');
+      row.push(L.num(e.discount) || '', r.covered ? `${r.coverLabel} (${r.covered})` : '', r.due, r.paid, r.balance, L.STATUS_LABEL[r.status], e.note || '');
       list.push(row);
     }
     const pays = [['תאריך', 'שם', 'כיתה', 'סכום', 'אמצעי', 'הערה', 'קבלה']].concat(pr.payments.map((x) => {

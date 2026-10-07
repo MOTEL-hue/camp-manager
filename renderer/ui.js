@@ -150,6 +150,7 @@
     },
     // לקרוא אחרי כל שינוי ב-db. מצב הקודם נשמר לביטול.
     commit() {
+      Logic.setProjects(this.db.projects);
       const now = JSON.stringify(this.db);
       if (now === this.lastSnapshot) return;
       this.undoStack.push(this.lastSnapshot);

@@ -4,7 +4,7 @@
   const { el, Store, modal, field, select, toast, confirmBox } = UI;
   window.Views = window.Views || {};
 
-  const KIND_LABEL = { camp: '🏕️ קייטנה / רישום', sale: '📚 מכירה / רכישת מוצרים' };
+  const KIND_LABEL = { camp: '🏕️ קייטנה / רישום', sale: '📚 מכירה / רכישת מוצרים', list: '📝 רשימה (רישום דרך גורם אחר)' };
   let showArchive = false;
 
   Views.projects = function (main) {
@@ -32,9 +32,11 @@
         el('div', { class: 'kind' }, KIND_LABEL[pr.kind] || ''),
         el('h2', { style: { margin: '4px 0 2px' } }, pr.name),
         el('div', { class: 'muted small' }, 'נוצר ' + UI.fmtDate(pr.createdAt)),
-        el('div', { class: 'progress' }, el('div', { style: { width: pct + '%' } })),
-        el('div', { class: 'small' }, `${pr.people.length} ברשימה · ${s.participants} משתתפים · שולם ${Logic.money(s.paid)} מתוך ${Logic.money(s.due)} (${pct}%)`),
-        s.balance > 0 ? el('div', { class: 'small neg' }, 'נשאר לגבות ' + Logic.money(s.balance)) : null));
+        pr.kind === 'list' ? el('div', { class: 'small', style: { marginTop: '10px' } }, `${pr.people.length} ברשימה`) : [
+          el('div', { class: 'progress' }, el('div', { style: { width: pct + '%' } })),
+          el('div', { class: 'small' }, `${pr.people.length} ברשימה · ${s.participants} משתתפים · שולם ${Logic.money(s.paid)} מתוך ${Logic.money(s.due)} (${pct}%)`),
+          s.covered ? el('div', { class: 'small', style: { color: '#6b3fd1' } }, Object.entries(s.coveredBy).map(([l, v]) => `${v.count} פטורים דרך ${l}`).join(' · ')) : null,
+          s.balance > 0 ? el('div', { class: 'small neg' }, 'נשאר לגבות ' + Logic.money(s.balance)) : null]));
     }
     main.appendChild(cards);
   };
@@ -42,7 +44,7 @@
   function newProjectDialog() {
     const db = Store.db;
     const name = el('input', { type: 'text', placeholder: 'למשל: קייטנת אחרי סוכות תשפ"ז' });
-    const kind = select([['camp', 'קייטנה / רישום (מחיר לכל משתתף)'], ['sale', 'מכירה (רשימת מוצרים ומחירים)']], 'camp');
+    const kind = select([['camp', 'קייטנה / רישום (מחיר לכל משתתף)'], ['sale', 'מכירה (רשימת מוצרים ומחירים)'], ['list', 'רשימה בלבד - למשל רישום דרך העירייה / המנהל']], 'camp');
     const copyFrom = select([['', 'פרויקט חדש לגמרי'], ...db.projects.slice().reverse().map((p) => [p.id, 'להעתיק הגדרות מ: ' + p.name])], '');
     const peopleFrom = select([['', 'רשימת אנשים ריקה (אקליד או אייבא)'], ...db.projects.slice().reverse().filter((p) => p.people.length).map((p) => [p.id, 'להעתיק את רשימת האנשים מ: ' + p.name + ` (${p.people.length})`])], '');
     const onlyIn = el('input', { type: 'checkbox' });
