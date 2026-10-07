@@ -167,7 +167,7 @@
     // סנכרון: אחרי כל שינוי (בהשהיה קצרה), כל דקה, וכשהאינטרנט חוזר.
     Store.onCommit = () => Cloud.soon();
     if (await Cloud.refreshAccount()) setTimeout(() => Cloud.syncAll(), 1500);
-    setInterval(() => Cloud.syncAll(), 60 * 1000);
+    setInterval(() => Cloud.syncAll(), 5 * 60 * 1000);
     window.addEventListener('online', () => Cloud.syncAll());
   })();
 })();

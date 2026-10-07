@@ -204,3 +204,17 @@ test('תזכורות במייל: קיבוץ לפי כתובת מייל', () => {
   assert.strictEqual(g[0].key, 'mom@x.com');
   assert.strictEqual(g[0].total, 340);
 });
+
+test('יתרות לשלוחת הטלפון: לפי כל טלפון של הורה, רק משתתפים', () => {
+  const { people, pr } = setup();
+  pr.people = people;
+  for (const id of ['a', 'b', 'd']) L.ensureEnrollment(pr, id).registered = true;
+  pr.payments.push({ personId: 'b', amount: 170 });
+  const map = L.phoneBalances(pr);
+  assert.deepStrictEqual(map['0527000001'].map((x) => [x.name, x.balance]), [['רחל כהן', 170], ['שרה כהן', 0]]);
+  assert.deepStrictEqual(Object.keys(map).sort(), ['0509999999', '0527000001', '0531112222'].sort());
+  assert.strictEqual(map['0531112222'][0].name, 'חנה לוי');
+  assert.strictEqual(map['0531112222'].length, 1, 'אותו ילד לא נכפל באותו מספר');
+  pr.archived = true;
+  assert.deepStrictEqual(L.phoneBalances(pr), {});
+});

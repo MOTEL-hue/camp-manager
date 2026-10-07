@@ -28,13 +28,23 @@
       box.className = 'cloud-state ' + state;
     },
 
-    // אחרי שינוי מקומי: סנכרון קצר אחרי שמפסיקים להקליד.
+    // אחרי שינוי מקומי: סנכרון כחצי דקה אחרי שמפסיקים לעבוד, כדי לא להעמיס על האתר.
     soon() {
       if (!this.account || !Store.db.projects.some((p) => p.cloud && p.cloud.sync)) return;
       clearTimeout(this.timer);
-      this.timer = setTimeout(() => this.syncAll(), 4000);
+      this.timer = setTimeout(() => this.syncAll(), 20000);
     },
 
+    // חותמת קצרה לתוכן, כדי לדעת אם יש בכלל מה לשלוח.
+    sig(pr) {
+      const str = JSON.stringify(Sync.forUpload(pr));
+      let h = 5381;
+      for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+      return str.length + ':' + (h >>> 0).toString(36);
+    },
+
+    // סנכרון: בקשה קלה אחת לרשימה (מספרי גרסה). פרויקט יורד רק אם השתנה באתר, ועולה רק אם השתנה
+    // כאן. המיזוג נעשה כאן בתוכנה; האתר רק שומר, ודוחה שמירה מול גרסה ישנה (ואז ממזגים שוב).
     async syncAll() {
       if (!this.account) return;
       if (this.running) { this.again = true; return; }
@@ -42,44 +52,68 @@
       this.setStatus('syncing');
       let changed = false;
       try {
-        // 1. פרויקטים ששותפו איתי (או שסונכרנו ממחשב אחר) ועוד אין במחשב הזה
         const list = await window.api.cloud('GET', '/api/projects');
         if (!list.ok) throw list;
         const remote = new Map(list.data.projects.map((p) => [p.id, p]));
+        // 1. פרויקטים ששותפו איתי (או סונכרנו ממחשב אחר) ועוד אין במחשב הזה
         for (const rp of list.data.projects) {
-          const local = Store.db.projects.find((p) => p.id === rp.id);
-          if (local && local.cloud && local.cloud.sync) continue;
-          if (local && local.cloud && local.cloud.declined) continue;
-          if (local) continue; // קיים מקומית בלי סנכרון - לא דורסים; המשתמש יכול לסמן לסנכרן
+          if (Store.db.projects.some((p) => p.id === rp.id)) continue;
           const r = await window.api.cloud('GET', '/api/projects/' + rp.id);
           if (!r.ok) continue;
           const pr = r.data.data;
-          pr.cloud = { sync: true, role: rp.role, owner: rp.owner_name || rp.owner_email };
+          pr.cloud = { sync: true, rev: r.data.rev, role: rp.role, owner: rp.owner_name || rp.owner_email, synced: true };
+          pr.cloud.sig = this.sig(pr);
           Store.replaceProject(pr);
           changed = true;
           toast(`הפרויקט "${pr.name}" נוסף מהאתר`);
         }
-        // 2. כל פרויקט מסומן: שולחים, מקבלים את המאוחד, וממזגים עם מה שהשתנה בינתיים
+        // 2. כל פרויקט מסומן
         for (const pr of Store.db.projects.filter((p) => p.cloud && p.cloud.sync)) {
-          if (pr.cloud.synced && !remote.has(pr.id)) {
-            // היה מסונכרן ונעלם מהאתר: השיתוף בוטל או שהפרויקט נמחק מהאתר. נשאר במחשב, בלי סנכרון.
-            pr.cloud = { sync: false };
+          const rp = remote.get(pr.id);
+          if (pr.cloud.synced && !rp) {
+            // היה מסונכרן ונעלם מהאתר: השיתוף בוטל או שהפרויקט נמחק משם. נשאר במחשב, בלי סנכרון.
+            pr.cloud = { sync: false, declined: true };
             Store.replaceProject(pr);
             changed = true;
             toast(`הפרויקט "${pr.name}" כבר לא משותף באתר - הוא נשאר במחשב בלבד`);
             continue;
           }
-          const sent = JSON.stringify(pr);
-          const r = await window.api.cloud('POST', '/api/projects/' + pr.id + '/sync', { data: Sync.forUpload(pr) });
-          if (!r.ok) throw r;
-          const current = Store.db.projects.find((p) => p.id === pr.id);
-          if (!current) continue;
-          const merged = Sync.merge(current, r.data.data);
-          merged.cloud = Object.assign({}, current.cloud, { synced: true, rev: r.data.rev, role: (remote.get(pr.id) || {}).role || current.cloud.role || 'owner' });
-          if (JSON.stringify(merged) !== JSON.stringify(current)) {
-            const stillSame = JSON.stringify(current) === sent;
+          const localChanged = pr.cloud.sig !== this.sig(pr);
+          const remoteChanged = rp && rp.rev !== pr.cloud.rev;
+          if (rp && !localChanged && !remoteChanged) continue;
+          let base = null;
+          let baseRev = rp ? rp.rev : 0;
+          if (remoteChanged) {
+            const g = await window.api.cloud('GET', '/api/projects/' + pr.id);
+            if (!g.ok) throw g;
+            base = g.data.data;
+            baseRev = g.data.rev;
+          }
+          for (let attempt = 0; attempt < 4; attempt++) {
+            const current = Store.db.projects.find((p) => p.id === pr.id);
+            const merged = base ? Sync.merge(current, base) : JSON.parse(JSON.stringify(current));
+            const role = (rp && rp.role) || current.cloud.role || 'owner';
+            let rev = baseRev;
+            const needUpload = !base || JSON.stringify(Sync.forUpload(merged)) !== JSON.stringify(Sync.forUpload(base));
+            if (needUpload) {
+              Logic.setProjects(Store.db.projects);
+              const res = await window.api.cloud('POST', '/api/projects/' + pr.id, { data: Sync.forUpload(merged), baseRev, balances: Logic.phoneBalances(merged) });
+              if (!res.ok && res.status === 409) {
+                const g = await window.api.cloud('GET', '/api/projects/' + pr.id);
+                if (!g.ok) throw g;
+                base = g.data.data;
+                baseRev = g.data.rev;
+                continue;
+              }
+              if (!res.ok) throw res;
+              rev = res.data.rev;
+            }
+            merged.cloud = Object.assign({}, current.cloud, { synced: true, rev, role });
+            merged.cloud.sig = this.sig(merged);
+            const before = JSON.stringify(Sync.forUpload(current));
             Store.replaceProject(merged);
-            if (!stillSame || JSON.stringify(Sync.forUpload(merged)) !== JSON.stringify(Sync.forUpload(current))) changed = true;
+            if (before !== JSON.stringify(Sync.forUpload(merged))) changed = true;
+            break;
           }
         }
         this.setStatus('ok');
@@ -112,11 +146,11 @@
   // ---------- מסך ההגדרות: חשבון באתר ----------
   Views.cloudSettings = async function (main) {
     await Cloud.refreshAccount();
-    const card = el('div', { class: 'card', style: { marginBottom: '14px' } }, el('h3', null, '☁️ חשבון באתר הסנכרון'));
+    const card = el('div', { class: 'card', style: { marginBottom: '14px' } }, el('h3', null, '☁️ חשבון במרכז הקייטנות (סנכרון ושיתוף)'));
     main.appendChild(card);
     if (Cloud.account) {
       card.appendChild(el('p', null, 'מחובר/ת כ: ', el('strong', null, Cloud.account.name || Cloud.account.email), Cloud.account.name ? ' (' + Cloud.account.email + ')' : ''));
-      card.appendChild(el('p', { class: 'muted small' }, 'כדי לסנכרן פרויקט: בהגדרות הפרויקט מסמנים "לסנכרן לאתר". פרויקטים ששותפו איתך מופיעים כאן לבד. ' + (Cloud.status.state !== 'off' ? 'מצב: ' + (document.getElementById('cloud-state') || {}).textContent : '')));
+      card.appendChild(el('p', { class: 'muted small' }, 'כדי לסנכרן פרויקט: בהגדרות הפרויקט מסמנים "לסנכרן לאתר". פרויקטים ששותפו איתך מופיעים לבד. הסנכרון בודק כל 5 דקות, ושולח רק כשמשהו השתנה. ' + (Cloud.status.state !== 'off' ? 'מצב: ' + (document.getElementById('cloud-state') || {}).textContent : '')));
       card.appendChild(el('div', { class: 'toolbar' },
         el('button', { class: 'btn', onclick: () => Cloud.syncAll() }, '🔄 סנכרן עכשיו'),
         el('button', { class: 'btn', onclick: () => window.open(Cloud.url) }, '🌐 פתח את האתר'),
@@ -138,7 +172,7 @@
       Cloud.syncAll();
       App.render();
     };
-    card.appendChild(el('p', { class: 'muted' }, 'חשבון משלך באתר הסנכרון: מסנכרן בין המחשבים שלך, ומאפשר לשתף פרויקט עם חשבון של מישהו אחר. רק פרויקטים שמסמנים עולים לאתר.'));
+    card.appendChild(el('p', { class: 'muted' }, 'חשבון ב"מרכז הקייטנות" שבאתר - נפרד מחשבון האתר הראשי. מסנכרן בין המחשבים שלך, ומאפשר לשתף פרויקט עם חשבון של מישהו אחר. רק פרויקטים שמסמנים עולים לאתר.'));
     card.appendChild(el('div', { class: 'form-row' }, field('מייל', email), field('סיסמה', pass)));
     card.appendChild(el('div', { class: 'form-row' }, field('שם (רק לחשבון חדש)', name), field('כתובת האתר', url)));
     card.appendChild(el('div', { class: 'toolbar' },

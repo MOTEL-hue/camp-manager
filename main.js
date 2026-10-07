@@ -118,7 +118,7 @@ function writeSecrets(values) {
 ipcMain.handle('secrets:status', () => {
   const s = readSecrets();
   return { gmailUser: s.gmailUser || '', hasGmail: !!(s.gmailUser && s.gmailPass), yemotLine: s.yemotLine || '', hasYemot: !!(s.yemotLine && s.yemotPass),
-    cloudUrl: s.cloudUrl || DEFAULT_CLOUD_URL, cloudEmail: s.cloudEmail || '', cloudName: s.cloudName || '', hasCloud: !!s.cloudToken };
+    cloudUrl: cloudBase(s), cloudEmail: s.cloudEmail || '', cloudName: s.cloudName || '', hasCloud: !!s.cloudToken };
 });
 ipcMain.handle('secrets:set', (_e, values) => {
   const allowed = ['gmailUser', 'gmailPass', 'yemotLine', 'yemotPass'];
@@ -191,10 +191,16 @@ ipcMain.handle('yemot:call', async (_e, command, params) => {
 ipcMain.handle('print:pdfBuffer', async () => win.webContents.printToPDF({ printBackground: true, pageSize: 'A4' }));
 
 // אתר הסנכרון. הטוקן נשמר מוצפן כמו הסיסמאות, והממשק לא רואה אותו.
-const DEFAULT_CLOUD_URL = 'https://camp-manager-sync.onrender.com';
+// מרכז הקייטנות בתוך האתר הקיים (כבר מאושר בסינון), עם חשבונות נפרדים משלו.
+const DEFAULT_CLOUD_URL = 'https://voice-chat-suite-rir5.onrender.com/camps';
+// כתובת שנשמרה מהאתר הנפרד הקודם (שהוחלף במרכז הקייטנות) - עוברת לכתובת החדשה.
+function cloudBase(s) {
+  const url = s.cloudUrl && !/camp-manager-sync\.onrender\.com/.test(s.cloudUrl) ? s.cloudUrl : DEFAULT_CLOUD_URL;
+  return url.replace(/\/+$/, '');
+}
 async function cloudFetch(method, urlPath, body, tokenOverride) {
   const s = readSecrets();
-  const base = (s.cloudUrl || DEFAULT_CLOUD_URL).replace(/\/+$/, '');
+  const base = cloudBase(s);
   const token = tokenOverride !== undefined ? tokenOverride : s.cloudToken;
   try {
     const res = await net.fetch(base + urlPath, {

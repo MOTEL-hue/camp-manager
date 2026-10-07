@@ -424,7 +424,24 @@
     voice: 'שלום. זוהי תזכורת מ{ארגון}. עבור {שמות} ב{פרויקט} נשאר לתשלום {סכום} שקלים. תודה רבה.',
   };
 
+  // יתרות לשלוחת הטלפון באתר: {טלפון: [{name, project, due, paid, balance, covered}]}. מחושב כאן,
+  // כדי שהאתר רק יקרא תשובה מוכנה כשהורה מתקשר.
+  function phoneBalances(project) {
+    const out = {};
+    if (!project || project.archived || project.kind === 'list') return out;
+    for (const p of project.people || []) {
+      const r = personRow(project, p);
+      if (!r.participant && !r.paid) continue;
+      const item = { name: fullName(p), project: project.name, due: r.due, paid: r.paid, balance: r.balance, covered: r.coverLabel || '' };
+      for (const ph of new Set([p.momPhone, p.dadPhone, p.homePhone].map(normPhone).filter(Boolean))) {
+        (out[ph] = out[ph] || []).push(item);
+      }
+    }
+    return out;
+  }
+
   return {
+    phoneBalances,
     reminderGroups, fillTemplate, DEFAULT_TEMPLATES,
     isYes, migrate, setProjects, coverage, coveredPart, grossDue, findMatch, LINK_CONDITIONS,
     PERSON_FIELDS, PAYMENT_METHODS, STATUS_LABEL,

@@ -15,7 +15,5 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: 1
       - run: npm test
-      - name: server tests
-        run: cd server && npm ci && npm test
       - name: syntax check
         run: for f in main.js preload.js renderer/*.js renderer/views/*.js; do node --check "$f"; done
