@@ -166,26 +166,31 @@ function setupPortableUpdater() {
     try { fs.accessSync(dir, fs.constants.W_OK); } catch (_) { dir = app.getPath('temp'); }
     const target = path.join(dir, '.camp-manager-update-' + version + '.bin');
     if (fs.existsSync(target) && fs.statSync(target).size === asset.size) return target;
-    const res = await net.fetch(asset.browser_download_url);
-    if (!res.ok || !res.body) throw new Error('הורדה נכשלה: ' + res.status);
     const tmp = target + '.part';
-    const out = fs.createWriteStream(tmp);
-    const reader = res.body.getReader();
-    let got = 0, lastPct = -1;
-    try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        got += value.length;
-        if (!out.write(Buffer.from(value))) await new Promise((r) => out.once('drain', r));
-        const pct = Math.floor((got / asset.size) * 100);
-        if (pct !== lastPct) { lastPct = pct; send('downloading', { percent: pct }); }
-      }
-    } finally {
-      await new Promise((r) => out.end(r));
-    }
+    try { fs.unlinkSync(tmp); } catch (_) { /* אין קובץ ישן */ }
+    // מנהל ההורדות של הדפדפן (כמו בכרום): עוקב אחרי הפניות, ממשיך אחרי ניתוק קצר, ומדווח התקדמות
+    // מדויקת. הורדה ידנית בזרם הציגה אצל משתמש התקדמות של מאות אחוזים ולא הסתיימה.
+    await new Promise((resolve, reject) => {
+      const ses = win.webContents.session;
+      const onWill = (_e, item) => {
+        if (item.getURL() !== asset.browser_download_url && !item.getURLChain().includes(asset.browser_download_url)) return;
+        ses.removeListener('will-download', onWill);
+        item.setSavePath(tmp);
+        let lastPct = -1;
+        item.on('updated', (_ev, state) => {
+          if (state === 'interrupted' && item.canResume()) { item.resume(); return; }
+          const total = item.getTotalBytes() || asset.size;
+          const pct = Math.min(100, Math.floor((item.getReceivedBytes() / total) * 100));
+          if (pct !== lastPct) { lastPct = pct; send('downloading', { percent: pct }); }
+        });
+        item.once('done', (_ev, state) => (state === 'completed' ? resolve() : reject(new Error('ההורדה נעצרה (' + state + ')'))));
+      };
+      ses.on('will-download', onWill);
+      ses.downloadURL(asset.browser_download_url);
+    });
     // קובץ חסר (חיבור שנקטע) לא מחליף את התוכנה.
-    if (fs.statSync(tmp).size !== asset.size) { fs.unlinkSync(tmp); throw new Error('ההורדה לא הושלמה'); }
+    const got = fs.statSync(tmp).size;
+    if (got !== asset.size) { fs.unlinkSync(tmp); throw new Error(`ההורדה לא הושלמה (${got} מתוך ${asset.size} בתים)`); }
     for (let i = 0; ; i++) {
       try { fs.renameSync(tmp, target); break; } catch (e) {
         if (i >= 10) throw e;
@@ -198,6 +203,7 @@ function setupPortableUpdater() {
   const check = async () => {
     if (!exePath) { send('error', { message: 'לא נמצא נתיב קובץ התוכנה (PORTABLE_EXECUTABLE_FILE)' }); return updateStatus; }
     if (downloading || ready) return updateStatus;
+    downloading = true; // מיד, לפני כל המתנה - כדי ששתי בדיקות צמודות לא יורידו פעמיים
     send('checking');
     try {
       const res = await net.fetch('https://api.github.com/repos/MOTEL-hue/camp-manager/releases/latest', { headers: { 'User-Agent': 'camp-manager' } });
@@ -207,7 +213,6 @@ function setupPortableUpdater() {
       if (!latest || !newerVersion(latest, app.getVersion())) { send('none', { version: app.getVersion() }); return updateStatus; }
       const asset = (rel.assets || []).find((a) => /portable.*\.exe$/i.test(a.name));
       if (!asset) { send('portable', { version: latest }); return updateStatus; }
-      downloading = true;
       send('available', { version: latest });
       const file = await download(asset, latest);
       ready = { version: latest, file };
@@ -243,6 +248,24 @@ function setupPortableUpdater() {
     child.on('error', (err) => sendUpdate('error', { message: 'החלפת הקובץ נכשלה: ' + errText(err) }));
     child.unref();
     ready = null;
+  }
+
+  // קובץ עדכון שנשאר ליד התוכנה: אם הוא ישן או זהה לגרסה הנוכחית - ההחלפה הצליחה, מוחקים אותו.
+  // אם הוא חדש יותר - ההחלפה בפעם הקודמת נכשלה, ומנסים שוב בסגירה הבאה.
+  for (const dir of [PORTABLE_DIR, app.getPath('temp')]) {
+    let names = [];
+    try { names = fs.readdirSync(dir); } catch (_) { continue; }
+    for (const name of names) {
+      const m = /^\.camp-manager-update-(\d+\.\d+\.\d+)\.(bin|exe)(\.part)?$/.exec(name);
+      if (!m) continue;
+      const file = path.join(dir, name);
+      if (!m[3] && newerVersion(m[1], app.getVersion())) {
+        ready = { version: m[1], file };
+        setTimeout(() => sendUpdate('ready', { version: m[1], retry: true }), 3000);
+      } else {
+        try { fs.unlinkSync(file); } catch (_) { /* ננסה בפעם הבאה */ }
+      }
+    }
   }
 
   app.on('will-quit', () => applyOnExit(false));
