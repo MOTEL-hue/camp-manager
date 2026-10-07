@@ -1,9 +1,14 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
-const DATA_DIR = process.env.CAMP_MANAGER_DATA || path.join(app.getPath('userData'), 'data');
+// בגרסה הניידת electron-builder מגדיר PORTABLE_EXECUTABLE_DIR, והנתונים נשמרים בתיקייה ליד הקובץ,
+// כך שהם עוברים יחד איתו (למשל בדיסק-און-קי).
+const PORTABLE_DIR = process.env.PORTABLE_EXECUTABLE_DIR;
+const DATA_DIR = process.env.CAMP_MANAGER_DATA
+  || (PORTABLE_DIR ? path.join(PORTABLE_DIR, 'נתוני ניהול קייטנות') : path.join(app.getPath('userData'), 'data'));
+const RELEASES_URL = 'https://github.com/MOTEL-hue/camp-manager/releases/latest';
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const KEEP_BACKUPS = 30;
@@ -83,7 +88,7 @@ function createWindow() {
 
 ipcMain.handle('db:load', () => loadDb());
 ipcMain.handle('db:save', (_e, data) => saveDb(data));
-ipcMain.handle('app:info', () => ({ version: app.getVersion(), dataDir: DATA_DIR, packaged: app.isPackaged }));
+ipcMain.handle('app:info', () => ({ version: app.getVersion(), dataDir: DATA_DIR, packaged: app.isPackaged, portable: !!PORTABLE_DIR }));
 ipcMain.handle('app:openDataDir', () => shell.openPath(DATA_DIR));
 
 ipcMain.handle('file:open', async (_e, opts) => {
@@ -118,8 +123,30 @@ ipcMain.handle('print:print', () => new Promise((resolve) => {
 }));
 
 // עדכון גרסה אוטומטי מ-GitHub Releases. רק בתוכנה מותקנת; בפיתוח אין מה לעדכן.
+function newerVersion(a, b) {
+  const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
+  return false;
+}
+
+// גרסה ניידת לא יכולה להחליף את עצמה בזמן ריצה, ולכן רק מודיעים שיש גרסה חדשה ומפנים להורדה.
+function setupPortableUpdateCheck() {
+  const check = async () => {
+    try {
+      const res = await net.fetch('https://api.github.com/repos/MOTEL-hue/camp-manager/releases/latest', { headers: { 'User-Agent': 'camp-manager' } });
+      if (!res.ok) return;
+      const latest = String((await res.json()).tag_name || '').replace(/^v/, '');
+      if (latest && newerVersion(latest, app.getVersion()) && win) win.webContents.send('update:status', { state: 'portable', version: latest, url: RELEASES_URL });
+    } catch (_) { /* בלי אינטרנט - מנסים שוב אחר כך */ }
+  };
+  ipcMain.handle('update:check', check);
+  setTimeout(check, 5000);
+  setInterval(check, 2 * 60 * 60 * 1000);
+}
+
 function setupUpdater() {
   if (!app.isPackaged) return;
+  if (PORTABLE_DIR) return setupPortableUpdateCheck();
   let autoUpdater;
   try { ({ autoUpdater } = require('electron-updater')); } catch (_) { return; }
   autoUpdater.autoDownload = true;

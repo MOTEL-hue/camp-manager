@@ -59,6 +59,10 @@
         box.classList.remove('hidden');
         box.appendChild(document.createTextNode('גרסה ' + s.version + ' מוכנה. היא תותקן כשתסגור את התוכנה.'));
         box.appendChild(el('button', { class: 'btn small primary', onclick: async () => { await Store.flush(); window.api.installUpdate(); } }, 'עדכן עכשיו'));
+      } else if (s.state === 'portable') {
+        box.classList.remove('hidden');
+        box.appendChild(document.createTextNode('יש גרסה חדשה (' + s.version + '). מורידים את הקובץ החדש ומחליפים את הישן; הנתונים נשארים בתיקייה.'));
+        box.appendChild(el('button', { class: 'btn small primary', onclick: () => window.open(s.url) }, 'להורדה'));
       } else {
         box.classList.add('hidden');
       }

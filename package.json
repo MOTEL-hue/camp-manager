@@ -1,7 +1,7 @@
 {
   "name": "camp-manager",
   "productName": "ניהול קייטנות ומכירות",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "ניהול רשימות, רישום, רכישות, תשלומים, הוצאות וסיכומים",
   "main": "main.js",
   "author": "MOTEL-hue",
@@ -34,7 +34,20 @@
       "package.json"
     ],
     "win": {
-      "target": "nsis",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "icon": "build/icon.png"
     },
     "nsis": {
@@ -42,7 +55,8 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "ניהול קייטנות ומכירות"
+      "shortcutName": "ניהול קייטנות ומכירות",
+      "artifactName": "camp-manager-setup-${version}.${ext}"
     },
     "publish": [
       {
@@ -51,6 +65,9 @@
         "repo": "camp-manager",
         "releaseType": "release"
       }
-    ]
+    ],
+    "portable": {
+      "artifactName": "camp-manager-portable-${version}.${ext}"
+    }
   }
 }
