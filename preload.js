@@ -13,5 +13,10 @@ contextBridge.exposeInMainWorld('api', {
   checkUpdate: () => ipcRenderer.invoke('update:check'),
   updateStatus: () => ipcRenderer.invoke('update:status'),
   installUpdate: () => ipcRenderer.invoke('update:install'),
+  secretsStatus: () => ipcRenderer.invoke('secrets:status'),
+  setSecrets: (v) => ipcRenderer.invoke('secrets:set', v),
+  sendMail: (msg) => ipcRenderer.invoke('mail:send', msg),
+  yemot: (command, params) => ipcRenderer.invoke('yemot:call', command, params),
+  pdfBuffer: () => ipcRenderer.invoke('print:pdfBuffer'),
   onUpdate: (cb) => ipcRenderer.on('update:status', (_e, s) => cb(s)),
 });

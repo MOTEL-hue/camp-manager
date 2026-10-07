@@ -43,7 +43,7 @@
   function emptyDb() {
     return {
       schema: 1,
-      settings: { orgName: '', receiptFooter: 'תודה רבה!', nextReceiptNo: 1, theme: 'light' },
+      settings: { orgName: '', receiptFooter: 'תודה רבה!', nextReceiptNo: 1, theme: 'light', templates: {} },
       projects: [],
     };
   }
@@ -60,6 +60,7 @@
       columns: [],
       hiddenFields: [],
       links: [], // [{id, projectId, label, condition, cover: 'full'|'amount', amount}]
+      reminders: [], // יומן תזכורות: [{date, channel, sent, failed}]
       // מחיר הרישום: none (אין), flat (שווה לכולם), group (לפי כיתה/קבוצה)
       pricing: { mode: kind === 'camp' || !kind ? 'flat' : 'none', flat: 0, groups: {} },
       products: [],
@@ -387,7 +388,44 @@
     return db;
   }
 
+  // תזכורות: מקבצים את החייבים לפי טלפון (או מייל) של ההורה - הודעה אחת למשפחה, עם כל הילדים והסכום.
+  function reminderGroups(project, people, by) {
+    const groups = new Map();
+    for (const p of people) {
+      const r = personRow(project, p);
+      if (r.balance <= 0) continue;
+      let key = '';
+      if (by === 'email') key = String(p.email || '').trim().toLowerCase();
+      else key = normPhone(p.momPhone) || normPhone(p.dadPhone) || normPhone(p.homePhone);
+      const g = groups.get(key || 'none:' + p.id) || { key, members: [], total: 0 };
+      g.members.push({ person: p, balance: r.balance });
+      g.total = round2(g.total + r.balance);
+      groups.set(key || 'none:' + p.id, g);
+    }
+    return [...groups.values()];
+  }
+
+  // מילוי תבנית הודעה: {שמות}, {משפחה}, {סכום}, {פרויקט}, {ארגון}, {פירוט}.
+  function fillTemplate(tpl, project, group, settings) {
+    const names = group.members.map((m) => m.person.firstName || fullName(m.person)).filter(Boolean);
+    const joined = names.length > 1 ? names.slice(0, -1).join(', ') + ' ו' + names[names.length - 1] : (names[0] || '');
+    const lastNames = [...new Set(group.members.map((m) => m.person.lastName).filter(Boolean))].join(' / ');
+    const detail = group.members.map((m) => `${fullName(m.person)}: ${round2(m.balance)} ש"ח`).join('\n');
+    const vars = {
+      'שמות': joined, 'משפחה': lastNames, 'סכום': String(round2(group.total)),
+      'פרויקט': project.name, 'ארגון': (settings && settings.orgName) || '', 'פירוט': detail,
+    };
+    return String(tpl || '').replace(/\{([^}]+)\}/g, (m, k) => (Object.prototype.hasOwnProperty.call(vars, k.trim()) ? vars[k.trim()] : m));
+  }
+
+  const DEFAULT_TEMPLATES = {
+    emailSubject: 'תזכורת תשלום - {פרויקט}',
+    emailBody: 'שלום רב,\n\nזוהי תזכורת ידידותית: עבור {שמות} ב{פרויקט} נשאר לתשלום {סכום} ש"ח.\n\n{פירוט}\n\nתודה רבה,\n{ארגון}',
+    voice: 'שלום. זוהי תזכורת מ{ארגון}. עבור {שמות} ב{פרויקט} נשאר לתשלום {סכום} שקלים. תודה רבה.',
+  };
+
   return {
+    reminderGroups, fillTemplate, DEFAULT_TEMPLATES,
     isYes, migrate, setProjects, coverage, coveredPart, grossDue, findMatch, LINK_CONDITIONS,
     PERSON_FIELDS, PAYMENT_METHODS, STATUS_LABEL,
     uid, num, round2, emptyDb, newProject, enrollment, ensureEnrollment,

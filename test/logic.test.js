@@ -178,3 +178,29 @@ test('קישור עם תנאי "שילם שם" והנחה קבועה במקום 
   assert.strictEqual(L.amountDue(camp, camp.people[1]), 170, 'לא שילמה במנהל');
   L.setProjects([]);
 });
+
+test('תזכורות: הודעה אחת למשפחה לפי טלפון, עם הסכום הכולל והשמות', () => {
+  const { people, pr } = setup();
+  for (const id of ['a', 'b', 'c', 'e']) L.ensureEnrollment(pr, id).registered = true;
+  pr.payments.push({ personId: 'b', amount: 70 });
+  pr.payments.push({ personId: 'c', amount: 170 });
+  const groups = L.reminderGroups(pr, people, 'phone');
+  const fam = groups.find((g) => g.key === '0527000001');
+  assert.deepStrictEqual(fam.members.map((m) => m.person.id), ['a', 'b']);
+  assert.strictEqual(fam.total, 270);
+  assert.ok(!groups.some((g) => g.members.some((m) => m.person.id === 'c')), 'מי ששילם לא מקבל');
+  const noPhone = groups.find((g) => g.members[0].person.id === 'e');
+  assert.strictEqual(noPhone.key, '', 'בלי טלפון - קבוצה בלי יעד');
+  const txt = L.fillTemplate('עבור {שמות} ב{פרויקט} נשאר {סכום} ש"ח {לא_קיים}', pr, fam, { orgName: 'ת"ת' });
+  assert.strictEqual(txt, 'עבור רחל ושרה בקייטנה נשאר 270 ש"ח {לא_קיים}');
+});
+
+test('תזכורות במייל: קיבוץ לפי כתובת מייל', () => {
+  const { people, pr } = setup();
+  people[0].email = 'Mom@x.com'; people[1].email = 'mom@x.com ';
+  for (const id of ['a', 'b']) L.ensureEnrollment(pr, id).registered = true;
+  const g = L.reminderGroups(pr, people, 'email');
+  assert.strictEqual(g.length, 1);
+  assert.strictEqual(g[0].key, 'mom@x.com');
+  assert.strictEqual(g[0].total, 340);
+});

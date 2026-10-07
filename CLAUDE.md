@@ -22,6 +22,9 @@
 - עדכון אוטומטי: בגרסה המותקנת `electron-updater`; בגרסה הניידת `setupPortableUpdater` ב-`main.js`
   מוריד את ה-EXE החדש ומחליף אותו ב-PowerShell כשהתוכנה נסגרת. כל שלב נרשם ל-`update-log.txt`
   בתיקיית הנתונים ומוצג בפס העליון ובמסך ההגדרות - שגיאת עדכון אף פעם לא נבלעת בשקט.
+- התראות (`renderer/views/notify.js`): מייל דרך Gmail SMTP עם סיסמת אפליקציה (nodemailer ב-`main.js`),
+  והודעה קולית/צינוק דרך API של ימות המשיח (`yemot:call`, רק פקודות מרשימה סגורה). הסיסמאות ב-
+  `secrets.json` מוצפנות ב-`safeStorage`, ואף פעם לא ב-`db.json`. קיבוץ למשפחה: `Logic.reminderGroups`.
 - `Logic.migrate` מעדכן קבצים ישנים (כולל המעבר מרשימה כללית לרשימה לכל פרויקט).
 - אחרי כל שינוי ב-`Store.db` קוראים ל-`Store.commit()` (שומר ומאפשר Ctrl+Z), או ל-`App.changed()`
   כשצריך לצייר את המסך מחדש.

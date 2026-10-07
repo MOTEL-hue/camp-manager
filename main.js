@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu, net } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, net, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -85,6 +85,107 @@ function createWindow() {
     if (input.type === 'keyDown' && input.key === 'F12' && !app.isPackaged) win.webContents.toggleDevTools();
   });
 }
+
+// סיסמאות (Gmail, ימות המשיח) נשמרות מוצפנות בהצפנה של ווינדוס, בקובץ נפרד - לא ב-db.json,
+// כדי שלא ייכנסו לקובצי גיבוי שאולי נשלחים הלאה.
+const SECRETS_FILE = path.join(DATA_DIR, 'secrets.json');
+function readSecrets() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(SECRETS_FILE, 'utf8'));
+    const out = {};
+    for (const [k, v] of Object.entries(raw)) {
+      out[k] = v.enc && safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(Buffer.from(v.enc, 'base64')) : (v.plain || '');
+    }
+    return out;
+  } catch (_) {
+    return {};
+  }
+}
+function writeSecrets(values) {
+  ensureDirs();
+  const cur = readSecrets();
+  Object.assign(cur, values);
+  const raw = {};
+  for (const [k, v] of Object.entries(cur)) {
+    if (!v) continue;
+    raw[k] = safeStorage.isEncryptionAvailable() ? { enc: safeStorage.encryptString(String(v)).toString('base64') } : { plain: String(v) };
+  }
+  fs.writeFileSync(SECRETS_FILE, JSON.stringify(raw), 'utf8');
+}
+// לממשק מוחזר רק מה מוגדר - לא הסיסמאות עצמן.
+ipcMain.handle('secrets:status', () => {
+  const s = readSecrets();
+  return { gmailUser: s.gmailUser || '', hasGmail: !!(s.gmailUser && s.gmailPass), yemotLine: s.yemotLine || '', hasYemot: !!(s.yemotLine && s.yemotPass) };
+});
+ipcMain.handle('secrets:set', (_e, values) => {
+  const allowed = ['gmailUser', 'gmailPass', 'yemotLine', 'yemotPass'];
+  const clean = {};
+  for (const k of allowed) if (values && typeof values[k] === 'string') clean[k] = k === 'gmailPass' ? values[k].replace(/\s+/g, '') : values[k].trim();
+  writeSecrets(clean);
+  return true;
+});
+
+// מייל מה-Gmail של המשתמש, עם "סיסמת אפליקציה" של גוגל.
+let transport = null;
+function mailer() {
+  const s = readSecrets();
+  if (!s.gmailUser || !s.gmailPass) throw new Error('לא הוגדר חשבון Gmail (בהגדרות)');
+  const key = s.gmailUser + ':' + s.gmailPass;
+  if (!transport || transport.key !== key) {
+    const nodemailer = require('nodemailer');
+    transport = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: s.gmailUser, pass: s.gmailPass },
+      connectionTimeout: 20000, greetingTimeout: 20000, socketTimeout: 30000 });
+    transport.key = key;
+    transport.from = s.gmailUser;
+  }
+  return transport;
+}
+ipcMain.handle('mail:send', async (_e, msg) => {
+  try {
+    const t = mailer();
+    const fromName = (msg.fromName || '').replace(/["<>]/g, '');
+    await t.sendMail({
+      from: fromName ? `"${fromName}" <${t.from}>` : t.from,
+      to: msg.to,
+      subject: msg.subject,
+      text: msg.text,
+      attachments: (msg.attachments || []).map((a) => ({ filename: a.filename, content: Buffer.from(a.content) })),
+    });
+    return { ok: true };
+  } catch (err) {
+    transport = null;
+    const m = String(err && err.message || err);
+    const friendly = /Invalid login|Username and Password not accepted|535/.test(m)
+      ? 'גוגל לא קיבל את הכתובת או את סיסמת האפליקציה. בדקו שהעתקתם את 16 התווים נכון.'
+      : /ENOTFOUND|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|timeout/i.test(m) ? 'אין חיבור לשרת הדואר של גוגל (אינטרנט או חומת אש).' : m;
+    return { ok: false, error: friendly };
+  }
+});
+
+// ימות המשיח: רק הפקודות שהתוכנה צריכה, עם הטוקן מהסיסמאות המוצפנות.
+const YEMOT_COMMANDS = new Set(['SendTTS', 'RunTzintuk', 'GetSession']);
+ipcMain.handle('yemot:call', async (_e, command, params) => {
+  if (!YEMOT_COMMANDS.has(command)) return { ok: false, error: 'פקודה לא מורשית' };
+  const s = readSecrets();
+  if (!s.yemotLine || !s.yemotPass) return { ok: false, error: 'לא הוגדר קו ימות המשיח (בהגדרות)' };
+  const qs = new URLSearchParams(Object.assign({ token: s.yemotLine + ':' + s.yemotPass }, params || {}));
+  try {
+    const res = await net.fetch('https://www.call2all.co.il/ym/api/' + command + '?' + qs.toString());
+    const raw = (await res.text()).trim();
+    let data;
+    try { data = JSON.parse(raw); } catch (_) { data = Object.fromEntries(new URLSearchParams(raw)); }
+    const status = String(data.responseStatus || data.ResponseStatus || '').toUpperCase();
+    if (status && status !== 'OK') {
+      const msg = String(data.message || data.Message || raw);
+      return { ok: false, error: /iskodesh/i.test(raw) ? 'שבת או חג - ימות המשיח לא מוציאים שיחות עכשיו.' : /token|login|pass/i.test(msg) ? 'מספר הקו או הסיסמה של ימות המשיח שגויים.' : msg, data };
+    }
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: 'אין חיבור לאינטרנט: ' + String(err && err.message || err) };
+  }
+});
+
+ipcMain.handle('print:pdfBuffer', async () => win.webContents.printToPDF({ printBackground: true, pageSize: 'A4' }));
 
 ipcMain.handle('db:load', () => loadDb());
 ipcMain.handle('db:save', (_e, data) => saveDb(data));

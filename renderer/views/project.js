@@ -412,6 +412,7 @@
       .sort((a, b) => (a.p.cls || '').localeCompare(b.p.cls || '', 'he') || (a.p.lastName || '').localeCompare(b.p.lastName || '', 'he'));
     const debtCard = el('div', { class: 'card' },
       el('div', { class: 'toolbar' }, el('h3', { style: { margin: 0 } }, `מי עוד חייב/ת (${debtors.length})`), el('div', { class: 'grow' }),
+        debtors.length ? el('button', { class: 'btn small primary', onclick: () => Views.reminderDialog(pr) }, '📣 שליחת תזכורות') : null,
         debtors.length ? el('button', { class: 'btn small', onclick: () => printDebtors(pr, debtors) }, '🖨️ הדפסה') : null,
         debtors.length ? el('button', { class: 'btn small', onclick: () => {
           const phones = [...new Set(debtors.map((d) => L.normPhone(d.p.momPhone) || L.normPhone(d.p.dadPhone)).filter(Boolean))];
@@ -419,11 +420,17 @@
           toast(`הועתקו ${phones.length} מספרי טלפון`);
         } }, '📋 העתק טלפונים') : null),
       debtors.length ? el('div', { class: 'table-wrap', style: { maxHeight: '420px' } }, el('table', { class: 'data' },
-        el('thead', null, el('tr', null, ['שם', 'כיתה', 'טלפון', 'לתשלום', 'שולם', 'יתרה', ''].map((h, i) => el('th', { class: i >= 3 && i <= 5 ? 'num' : '' }, h)))),
+        el('thead', null, el('tr', null, ['שם', 'כיתה', 'טלפון', 'לתשלום', 'שולם', 'יתרה', 'תזכורת אחרונה', ''].map((h, i) => el('th', { class: i >= 3 && i <= 5 ? 'num' : '' }, h)))),
         el('tbody', null, debtors.map(({ p, r }) => el('tr', null,
           el('td', null, L.fullName(p)), el('td', null, p.cls || ''), el('td', { dir: 'ltr' }, p.momPhone || p.dadPhone || p.homePhone || ''),
           el('td', { class: 'num' }, L.money(r.due)), el('td', { class: 'num' }, L.money(r.paid)), el('td', { class: 'num neg' }, L.money(r.balance)),
+          el('td', { class: 'muted' }, UI.fmtDate((L.enrollment(pr, p.id) || {}).lastReminder || '')),
           el('td', null, el('button', { class: 'btn small', onclick: () => paymentDialog(pr, p) }, '💰'))))))) : el('p', { class: 'pos' }, '🎉 כולם שילמו!'));
+    if ((pr.reminders || []).length) {
+      const names = { email: 'מייל', tts: 'הודעה קולית', tzintuk: 'צינוק' };
+      debtCard.appendChild(el('p', { class: 'muted small', style: { marginTop: '10px' } }, 'תזכורות אחרונות: ' + pr.reminders.slice(-5).reverse()
+        .map((x) => `${UI.fmtDate(x.date)} ${names[x.channel] || x.channel} (${x.sent}${x.failed ? ', ' + x.failed + ' נכשלו' : ''})`).join(' · ')));
+    }
     root.appendChild(debtCard);
   }
 
@@ -608,7 +615,8 @@
       body: preview,
       buttons: [
         { label: '🖨️ הדפסה', primary: true, onclick: () => { printNode(receiptHtml(pr, p, receiptNo)); return false; } },
-        { label: '📄 שמירה כ-PDF (לשליחה במייל)', onclick: async () => { await printNode(receiptHtml(pr, p, receiptNo), fileName); return false; } },
+        { label: '📧 שליחה במייל', onclick: async () => { await Views.emailReceipt(pr, p, receiptNo, () => receiptHtml(pr, p, receiptNo)); return false; } },
+        { label: '📄 שמירה כ-PDF', onclick: async () => { await printNode(receiptHtml(pr, p, receiptNo), fileName); return false; } },
         { label: 'סגור' },
       ],
     });
