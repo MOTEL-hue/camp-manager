@@ -18,5 +18,8 @@ contextBridge.exposeInMainWorld('api', {
   sendMail: (msg) => ipcRenderer.invoke('mail:send', msg),
   yemot: (command, params) => ipcRenderer.invoke('yemot:call', command, params),
   pdfBuffer: () => ipcRenderer.invoke('print:pdfBuffer'),
+  cloud: (method, path, body) => ipcRenderer.invoke('cloud:request', method, path, body),
+  cloudLogin: (opts) => ipcRenderer.invoke('cloud:login', opts),
+  cloudLogout: () => ipcRenderer.invoke('cloud:logout'),
   onUpdate: (cb) => ipcRenderer.on('update:status', (_e, s) => cb(s)),
 });

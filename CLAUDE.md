@@ -25,6 +25,12 @@
 - התראות (`renderer/views/notify.js`): מייל דרך Gmail SMTP עם סיסמת אפליקציה (nodemailer ב-`main.js`),
   והודעה קולית/צינוק דרך API של ימות המשיח (`yemot:call`, רק פקודות מרשימה סגורה). הסיסמאות ב-
   `secrets.json` מוצפנות ב-`safeStorage`, ואף פעם לא ב-`db.json`. קיבוץ למשפחה: `Logic.reminderGroups`.
+- אתר הסנכרון (`server/`, Node + Express + PostgreSQL ב-Neon, נפרס ל-Render לפי `render.yaml`): חשבונות,
+  סנכרון ושיתוף פרויקטים, ושלוחת "בירור יתרה" לימות המשיח (`/yemot/<key>`). השרת משתמש באותם
+  `renderer/logic.js` ו-`renderer/sync.js` כמו התוכנה. בדיקות: `cd server && npm test` (pg-mem, בלי רשת).
+- סנכרון בתוכנה (`renderer/cloud.js`): רק פרויקטים עם `cloud.sync`. `Store.commit` מחתים כל פריט
+  שהשתנה (`Sync.stamp`), וגם ביטול (Ctrl+Z) נחשב שינוי חדש. המיזוג (`Sync.merge`): לכל פריט הגרסה
+  המאוחרת, ומחיקות נשמרות ב-`tombstones`. `cloud` הוא שדה מקומי ולא עולה לאתר.
 - `Logic.migrate` מעדכן קבצים ישנים (כולל המעבר מרשימה כללית לרשימה לכל פרויקט).
 - אחרי כל שינוי ב-`Store.db` קוראים ל-`Store.commit()` (שומר ומאפשר Ctrl+Z), או ל-`App.changed()`
   כשצריך לצייר את המסך מחדש.

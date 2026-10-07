@@ -9,6 +9,8 @@ const PORTABLE_DIR = process.env.PORTABLE_EXECUTABLE_DIR;
 const DATA_DIR = process.env.CAMP_MANAGER_DATA
   || (PORTABLE_DIR ? path.join(PORTABLE_DIR, 'נתוני ניהול קייטנות') : path.join(app.getPath('userData'), 'data'));
 const RELEASES_URL = 'https://github.com/MOTEL-hue/camp-manager/releases/latest';
+// תיקיית נתונים מפורשת (בבדיקות) מקבלת גם פרופיל דפדפן משלה, כדי ששני מופעים לא יחסמו זה את זה.
+if (process.env.CAMP_MANAGER_DATA) app.setPath('userData', path.join(process.env.CAMP_MANAGER_DATA, 'profile'));
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const KEEP_BACKUPS = 30;
@@ -115,7 +117,8 @@ function writeSecrets(values) {
 // לממשק מוחזר רק מה מוגדר - לא הסיסמאות עצמן.
 ipcMain.handle('secrets:status', () => {
   const s = readSecrets();
-  return { gmailUser: s.gmailUser || '', hasGmail: !!(s.gmailUser && s.gmailPass), yemotLine: s.yemotLine || '', hasYemot: !!(s.yemotLine && s.yemotPass) };
+  return { gmailUser: s.gmailUser || '', hasGmail: !!(s.gmailUser && s.gmailPass), yemotLine: s.yemotLine || '', hasYemot: !!(s.yemotLine && s.yemotPass),
+    cloudUrl: s.cloudUrl || DEFAULT_CLOUD_URL, cloudEmail: s.cloudEmail || '', cloudName: s.cloudName || '', hasCloud: !!s.cloudToken };
 });
 ipcMain.handle('secrets:set', (_e, values) => {
   const allowed = ['gmailUser', 'gmailPass', 'yemotLine', 'yemotPass'];
@@ -186,6 +189,41 @@ ipcMain.handle('yemot:call', async (_e, command, params) => {
 });
 
 ipcMain.handle('print:pdfBuffer', async () => win.webContents.printToPDF({ printBackground: true, pageSize: 'A4' }));
+
+// אתר הסנכרון. הטוקן נשמר מוצפן כמו הסיסמאות, והממשק לא רואה אותו.
+const DEFAULT_CLOUD_URL = 'https://camp-manager-sync.onrender.com';
+async function cloudFetch(method, urlPath, body, tokenOverride) {
+  const s = readSecrets();
+  const base = (s.cloudUrl || DEFAULT_CLOUD_URL).replace(/\/+$/, '');
+  const token = tokenOverride !== undefined ? tokenOverride : s.cloudToken;
+  try {
+    const res = await net.fetch(base + urlPath, {
+      method,
+      headers: Object.assign({ 'content-type': 'application/json' }, token ? { authorization: 'Bearer ' + token } : {}),
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401 && token) writeSecrets({ cloudToken: '' });
+    return res.ok ? { ok: true, status: res.status, data } : { ok: false, status: res.status, error: data.error || ('שגיאה ' + res.status) };
+  } catch (err) {
+    return { ok: false, status: 0, offline: true, error: 'אין חיבור לאתר הסנכרון' };
+  }
+}
+ipcMain.handle('cloud:request', (_e, method, urlPath, body) => {
+  if (!/^\/api\/[\w\-/]+$/.test(String(urlPath))) return { ok: false, error: 'כתובת לא תקינה' };
+  return cloudFetch(String(method || 'GET'), urlPath, body);
+});
+ipcMain.handle('cloud:login', async (_e, { mode, url, email, password, name }) => {
+  if (url) writeSecrets({ cloudUrl: String(url).trim() });
+  const r = await cloudFetch('POST', mode === 'register' ? '/api/register' : '/api/login', { email, password, name, device: require('os').hostname() }, '');
+  if (r.ok) writeSecrets({ cloudToken: r.data.token, cloudEmail: r.data.user.email, cloudName: r.data.user.name || '' });
+  return r.ok ? { ok: true, user: r.data.user } : r;
+});
+ipcMain.handle('cloud:logout', async () => {
+  await cloudFetch('POST', '/api/logout');
+  writeSecrets({ cloudToken: '', cloudEmail: '', cloudName: '' });
+  return true;
+});
 
 ipcMain.handle('db:load', () => loadDb());
 ipcMain.handle('db:save', (_e, data) => saveDb(data));

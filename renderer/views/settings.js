@@ -14,6 +14,7 @@
         field('מספר הקבלה הבא', el('input', { type: 'number', min: 1, value: s.nextReceiptNo, onchange: (e) => { s.nextReceiptNo = Math.max(1, parseInt(e.target.value, 10) || 1); Store.commit(); } }))),
       field('שורת סיום בקבלה', el('input', { type: 'text', value: s.receiptFooter || '', onchange: (e) => { s.receiptFooter = e.target.value; Store.commit(); } }))));
 
+    await Views.cloudSettings(main);
     await Views.notifySettings(main);
     const info = await window.api.info();
     main.appendChild(el('div', { class: 'card', style: { marginBottom: '14px' } }, el('h3', null, 'גיבוי'),

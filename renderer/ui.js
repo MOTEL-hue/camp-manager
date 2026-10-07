@@ -148,15 +148,32 @@
       this.lastSnapshot = JSON.stringify(this.db);
       if (!data) await window.api.saveDb(this.db);
     },
+    // פרויקטים שמסונכרנים לאתר: כל פריט שהשתנה מקבל חותמת זמן, כדי שהמיזוג ידע מה חדש יותר.
+    stampSynced(prevDb) {
+      if (!this.db.projects.some((p) => p.cloud && p.cloud.sync)) return;
+      const before = new Map(((prevDb && prevDb.projects) || []).map((p) => [p.id, p]));
+      const now = Date.now();
+      for (const pr of this.db.projects) if (pr.cloud && pr.cloud.sync) Sync.stamp(before.get(pr.id) || null, pr, now);
+    },
     // לקרוא אחרי כל שינוי ב-db. מצב הקודם נשמר לביטול.
     commit() {
       Logic.setProjects(this.db.projects);
+      if (this.db.projects.some((p) => p.cloud && p.cloud.sync)) this.stampSynced(JSON.parse(this.lastSnapshot));
       const now = JSON.stringify(this.db);
       if (now === this.lastSnapshot) return;
       this.undoStack.push(this.lastSnapshot);
       if (this.undoStack.length > 60) this.undoStack.shift();
       this.redoStack = [];
       this.lastSnapshot = now;
+      this.scheduleSave();
+      if (this.onCommit) this.onCommit();
+    },
+    // גרסה שהגיעה מהאתר: מחליפים בלי ליצור צעד ביטול ובלי חותמות חדשות.
+    replaceProject(pr) {
+      const i = this.db.projects.findIndex((p) => p.id === pr.id);
+      if (i >= 0) this.db.projects[i] = pr; else this.db.projects.push(pr);
+      migrate(this.db);
+      this.lastSnapshot = JSON.stringify(this.db);
       this.scheduleSave();
     },
     scheduleSave() {
@@ -181,17 +198,24 @@
     undo() {
       if (!this.undoStack.length) { toast('אין מה לבטל'); return false; }
       this.redoStack.push(this.lastSnapshot);
-      this.lastSnapshot = this.undoStack.pop();
-      this.db = JSON.parse(this.lastSnapshot);
+      const before = this.db;
+      this.db = JSON.parse(this.undoStack.pop());
+      // ביטול הוא שינוי חדש מבחינת הסנכרון - אחרת הגרסה שבאתר הייתה "מחזירה" את מה שבוטל.
+      this.stampSynced(before);
+      this.lastSnapshot = JSON.stringify(this.db);
       this.scheduleSave();
+      if (this.onCommit) this.onCommit();
       return true;
     },
     redo() {
       if (!this.redoStack.length) return false;
       this.undoStack.push(this.lastSnapshot);
-      this.lastSnapshot = this.redoStack.pop();
-      this.db = JSON.parse(this.lastSnapshot);
+      const before = this.db;
+      this.db = JSON.parse(this.redoStack.pop());
+      this.stampSynced(before);
+      this.lastSnapshot = JSON.stringify(this.db);
       this.scheduleSave();
+      if (this.onCommit) this.onCommit();
       return true;
     },
   };

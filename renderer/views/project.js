@@ -569,6 +569,8 @@
     } }, 'הוסף')));
     root.appendChild(marksCard);
 
+    Views.projectCloudCard(root, pr);
+
     root.appendChild(el('div', { class: 'card' }, el('h3', null, 'פעולות'),
       el('div', { class: 'toolbar' },
         el('button', { class: 'btn primary', onclick: () => App.go('project', { id: pr.id }) }, 'סיימתי - להמשך'),

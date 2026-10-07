@@ -1,0 +1,23 @@
+# אתר הסנכרון של התוכנה (תיקיית server). מסד הנתונים ב-Neon (חינמי לצמיתות):
+# DATABASE_URL מודבק ידנית ב-Render ולא נשמר כאן.
+services:
+  - type: web
+    name: camp-manager-sync
+    runtime: node
+    plan: free
+    region: frankfurt
+    branch: main
+    buildCommand: cd server && npm ci --omit=dev
+    startCommand: node server/index.js
+    healthCheckPath: /health
+    autoDeploy: true
+    buildFilter:
+      paths:
+        - server/**
+        - renderer/logic.js
+        - renderer/sync.js
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: NODE_VERSION
+        value: "22"

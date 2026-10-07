@@ -56,6 +56,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .side-foot .muted { color: #7c869b; }
 .save-state { color: #8fd3a8; margin-bottom: 4px; }
 .save-state.dirty { color: #f5c26b; }
+.cloud-state { font-size: 12px; margin-bottom: 4px; color: #8fb8f5; }
+.cloud-state.offline { color: #9aa4b8; }
+.cloud-state.error { color: #f5a3a3; }
 .update-box { background: rgba(255,255,255,.08); border-radius: 8px; padding: 8px; margin-bottom: 8px; }
 .update-box button { margin-top: 6px; width: 100%; }
 

@@ -41,7 +41,7 @@
     nav.appendChild(item('פרויקטים', '📁', r.view === 'projects', () => App.go('projects')));
     const active = Store.db.projects.filter((p) => !p.archived);
     for (const pr of active.slice(-8).reverse()) {
-      nav.appendChild(item(pr.name, '•', r.view === 'project' && r.id === pr.id, () => App.go('project', { id: pr.id }), ' nav-sub'));
+      nav.appendChild(item(pr.name, pr.cloud && pr.cloud.sync ? '☁' : '•', r.view === 'project' && r.id === pr.id, () => App.go('project', { id: pr.id }), ' nav-sub'));
     }
     nav.appendChild(el('div', { class: 'nav-sep' }, 'כללי'));
     nav.appendChild(item('הגדרות וגיבוי', '⚙️', r.view === 'settings', () => App.go('settings')));
@@ -164,5 +164,10 @@
     document.getElementById('version').textContent = 'גרסה ' + info.version;
     setupUpdates();
     App.render();
+    // סנכרון: אחרי כל שינוי (בהשהיה קצרה), כל דקה, וכשהאינטרנט חוזר.
+    Store.onCommit = () => Cloud.soon();
+    if (await Cloud.refreshAccount()) setTimeout(() => Cloud.syncAll(), 1500);
+    setInterval(() => Cloud.syncAll(), 60 * 1000);
+    window.addEventListener('online', () => Cloud.syncAll());
   })();
 })();
