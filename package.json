@@ -1,0 +1,56 @@
+{
+  "name": "camp-manager",
+  "productName": "ניהול קייטנות ומכירות",
+  "version": "1.0.0",
+  "description": "ניהול רשימות, רישום, רכישות, תשלומים, הוצאות וסיכומים",
+  "main": "main.js",
+  "author": "MOTEL-hue",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "dist": "electron-builder --win --publish never",
+    "release": "electron-builder --win --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9",
+    "pdfjs-dist": "4.10.38",
+    "xlsx": "0.18.5"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.motelhue.campmanager",
+    "productName": "ניהול קייטנות ומכירות",
+    "executableName": "camp-manager",
+    "artifactName": "camp-manager-setup-${version}.${ext}",
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**",
+      "build/icon.png",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "ניהול קייטנות ומכירות"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "MOTEL-hue",
+        "repo": "camp-manager",
+        "releaseType": "release"
+      }
+    ]
+  }
+}

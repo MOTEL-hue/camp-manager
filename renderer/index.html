@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; worker-src 'self' blob:">
+  <title>ניהול קייטנות ומכירות</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <aside class="side">
+    <div class="brand">
+      <div class="logo">₪</div>
+      <div>
+        <div class="brand-title">ניהול קייטנות</div>
+        <div class="brand-sub">ומכירות</div>
+      </div>
+    </div>
+    <nav id="nav"></nav>
+    <div class="side-foot">
+      <div id="update-box" class="update-box hidden"></div>
+      <div id="save-state" class="save-state">נשמר</div>
+      <div id="version" class="muted small"></div>
+    </div>
+  </aside>
+  <main id="main"></main>
+  <div id="modal-root"></div>
+  <div id="print-root"></div>
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="../node_modules/xlsx/dist/xlsx.full.min.js"></script>
+  <script src="logic.js"></script>
+  <script src="importer.js"></script>
+  <script src="ui.js"></script>
+  <script src="views/people.js"></script>
+  <script src="views/projects.js"></script>
+  <script src="views/project.js"></script>
+  <script src="views/settings.js"></script>
+  <script src="views/import.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
