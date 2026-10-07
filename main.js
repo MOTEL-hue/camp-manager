@@ -123,6 +123,27 @@ ipcMain.handle('print:print', () => new Promise((resolve) => {
 }));
 
 // עדכון גרסה אוטומטי מ-GitHub Releases. רק בתוכנה מותקנת; בפיתוח אין מה לעדכן.
+// מצב העדכון האחרון נשמר כדי שמסך ההגדרות יוכל להציג אותו, וכל שלב נרשם ליומן בתיקיית הנתונים -
+// כך אפשר לראות מה נכשל אצל המשתמש, בלי כלי פיתוח.
+let updateStatus = { state: 'idle' };
+function sendUpdate(state, extra) {
+  updateStatus = Object.assign({ state, at: new Date().toISOString(), url: RELEASES_URL }, extra || {});
+  const quiet = state === 'downloading' && (extra || {}).percent % 10 !== 0;
+  if (!quiet) try {
+    ensureDirs();
+    const line = new Date().toISOString() + ' ' + state + ' ' + JSON.stringify(extra || {}) + '\n';
+    const logFile = path.join(DATA_DIR, 'update-log.txt');
+    if (fs.existsSync(logFile) && fs.statSync(logFile).size > 200000) fs.renameSync(logFile, logFile + '.old');
+    fs.appendFileSync(logFile, line, 'utf8');
+  } catch (_) { /* יומן הוא עזר בלבד */ }
+  if (win && !win.isDestroyed()) win.webContents.send('update:status', updateStatus);
+}
+ipcMain.handle('update:status', () => updateStatus);
+
+function errText(err) {
+  return String((err && (err.message || err.code)) || err);
+}
+
 function newerVersion(a, b) {
   const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
   for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
@@ -134,12 +155,16 @@ function newerVersion(a, b) {
 // הנתונים בתיקייה שליד הקובץ לא נוגעים בהם.
 function setupPortableUpdater() {
   const exePath = process.env.PORTABLE_EXECUTABLE_FILE;
-  const send = (state, extra) => win && win.webContents.send('update:status', Object.assign({ state }, extra || {}));
+  const send = sendUpdate;
   let downloading = false;
   let ready = null; // {version, file}
 
   async function download(asset, version) {
-    const target = path.join(PORTABLE_DIR, '.camp-manager-update-' + version + '.exe');
+    // שם בלי סיומת exe עד ההחלפה, כדי שאנטי-וירוס לא ינעל את הקובץ באמצע; ואם אי אפשר לכתוב ליד
+    // התוכנה (למשל תיקייה מוגנת) - לתיקייה הזמנית של המשתמש.
+    let dir = PORTABLE_DIR;
+    try { fs.accessSync(dir, fs.constants.W_OK); } catch (_) { dir = app.getPath('temp'); }
+    const target = path.join(dir, '.camp-manager-update-' + version + '.bin');
     if (fs.existsSync(target) && fs.statSync(target).size === asset.size) return target;
     const res = await net.fetch(asset.browser_download_url);
     if (!res.ok || !res.body) throw new Error('הורדה נכשלה: ' + res.status);
@@ -161,30 +186,38 @@ function setupPortableUpdater() {
     }
     // קובץ חסר (חיבור שנקטע) לא מחליף את התוכנה.
     if (fs.statSync(tmp).size !== asset.size) { fs.unlinkSync(tmp); throw new Error('ההורדה לא הושלמה'); }
-    fs.renameSync(tmp, target);
+    for (let i = 0; ; i++) {
+      try { fs.renameSync(tmp, target); break; } catch (e) {
+        if (i >= 10) throw e;
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    }
     return target;
   }
 
   const check = async () => {
-    if (downloading || ready || !exePath) return;
+    if (!exePath) { send('error', { message: 'לא נמצא נתיב קובץ התוכנה (PORTABLE_EXECUTABLE_FILE)' }); return updateStatus; }
+    if (downloading || ready) return updateStatus;
+    send('checking');
     try {
       const res = await net.fetch('https://api.github.com/repos/MOTEL-hue/camp-manager/releases/latest', { headers: { 'User-Agent': 'camp-manager' } });
-      if (!res.ok) return;
+      if (!res.ok) throw new Error('GitHub החזיר ' + res.status);
       const rel = await res.json();
       const latest = String(rel.tag_name || '').replace(/^v/, '');
-      if (!latest || !newerVersion(latest, app.getVersion())) { send('none'); return; }
+      if (!latest || !newerVersion(latest, app.getVersion())) { send('none', { version: app.getVersion() }); return updateStatus; }
       const asset = (rel.assets || []).find((a) => /portable.*\.exe$/i.test(a.name));
-      if (!asset) { send('portable', { version: latest, url: RELEASES_URL }); return; }
+      if (!asset) { send('portable', { version: latest }); return updateStatus; }
       downloading = true;
       send('available', { version: latest });
       const file = await download(asset, latest);
       ready = { version: latest, file };
       send('ready', { version: latest });
     } catch (err) {
-      send('error', { message: String(err && err.message || err) });
+      send('error', { message: errText(err) });
     } finally {
       downloading = false;
     }
+    return updateStatus;
   };
 
   function applyOnExit(relaunch) {
@@ -195,8 +228,11 @@ function setupPortableUpdater() {
       '  try { Move-Item -LiteralPath $n -Destination $o -Force -ErrorAction Stop; break } catch { Start-Sleep -Milliseconds 500 }',
       '}',
       'if ($env:CM_RELAUNCH -eq "1") { Start-Process -FilePath $o }',
+      'if (Test-Path -LiteralPath $n) { $r = "replace-FAILED" } else { $r = "replace-ok" }',
+      'Add-Content -LiteralPath $env:CM_LOG -Value ((Get-Date).ToString("s") + " " + $r)',
     ].join('\n');
-    const env = Object.assign({}, process.env, { CM_NEW: ready.file, CM_OLD: exePath, CM_RELAUNCH: relaunch ? '1' : '0' });
+    const env = Object.assign({}, process.env, { CM_NEW: ready.file, CM_OLD: exePath, CM_RELAUNCH: relaunch ? '1' : '0', CM_LOG: path.join(DATA_DIR, 'update-log.txt') });
+    sendUpdate('applying', { from: ready.file, to: exePath });
     // משתני הגרסה הניידת שייכים לתהליך הנוכחי; המופע החדש יקבל משלו.
     delete env.PORTABLE_EXECUTABLE_DIR;
     delete env.PORTABLE_EXECUTABLE_FILE;
@@ -204,6 +240,7 @@ function setupPortableUpdater() {
     const child = require('child_process').spawn('powershell.exe',
       ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-Command', script],
       { detached: true, stdio: 'ignore', windowsHide: true, env });
+    child.on('error', (err) => sendUpdate('error', { message: 'החלפת הקובץ נכשלה: ' + errText(err) }));
     child.unref();
     ready = null;
   }
@@ -222,15 +259,15 @@ function setupUpdater() {
   try { ({ autoUpdater } = require('electron-updater')); } catch (_) { return; }
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
-  const send = (state, extra) => win && win.webContents.send('update:status', Object.assign({ state }, extra || {}));
+  const send = sendUpdate;
   autoUpdater.on('checking-for-update', () => send('checking'));
   autoUpdater.on('update-available', (i) => send('available', { version: i.version }));
-  autoUpdater.on('update-not-available', () => send('none'));
+  autoUpdater.on('update-not-available', () => send('none', { version: app.getVersion() }));
   autoUpdater.on('download-progress', (p) => send('downloading', { percent: Math.round(p.percent) }));
   autoUpdater.on('update-downloaded', (i) => send('ready', { version: i.version }));
-  autoUpdater.on('error', (err) => send('error', { message: String(err && err.message || err) }));
+  autoUpdater.on('error', (err) => send('error', { message: errText(err) }));
   ipcMain.handle('update:install', () => autoUpdater.quitAndInstall());
-  ipcMain.handle('update:check', () => autoUpdater.checkForUpdates().catch(() => null));
+  ipcMain.handle('update:check', async () => { await autoUpdater.checkForUpdates().catch(() => null); return updateStatus; });
   // בלי אינטרנט הבדיקה פשוט נכשלת בשקט, ומנסים שוב כל שעתיים.
   const check = () => autoUpdater.checkForUpdates().catch(() => null);
   setTimeout(check, 5000);

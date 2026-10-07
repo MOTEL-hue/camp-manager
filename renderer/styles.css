@@ -59,6 +59,21 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .update-box { background: rgba(255,255,255,.08); border-radius: 8px; padding: 8px; margin-bottom: 8px; }
 .update-box button { margin-top: 6px; width: 100%; }
 
+/* פס "יש עדכון חדש" למעלה */
+.update-banner {
+  position: fixed; top: 0; left: 0; right: 230px; z-index: 40;
+  background: linear-gradient(90deg, #2f6fde, #5a8ff0); color: #fff;
+  padding: 9px 20px; display: flex; align-items: center; gap: 12px; font-weight: 600;
+  box-shadow: 0 2px 8px rgba(20, 30, 50, .2);
+}
+.update-banner.error { background: #c0392b; }
+.update-banner .grow { flex: 1; }
+.update-banner .btn { color: #fff; background: rgba(255,255,255,.15); border-color: rgba(255,255,255,.4); }
+.update-banner .btn.primary { background: #fff; color: #2f6fde; border-color: #fff; }
+.update-banner .bar { width: 160px; height: 8px; background: rgba(255,255,255,.3); border-radius: 99px; overflow: hidden; }
+.update-banner .bar > div { height: 100%; background: #fff; }
+body.has-banner main { padding-top: 64px; }
+
 /* תוכן */
 main { flex: 1; overflow: auto; padding: 22px 28px 60px; }
 h1 { font-size: 22px; margin: 0; }
@@ -194,6 +209,6 @@ tr.dim td input { color: #9aa1b1; }
 
 @media print {
   body { display: block; background: #fff; overflow: visible; }
-  .side, main, #modal-root, #toast { display: none !important; }
+  .side, main, #modal-root, #toast, #update-banner { display: none !important; }
   #print-root { display: block !important; }
 }

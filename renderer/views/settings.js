@@ -28,7 +28,12 @@
       el('p', { class: 'muted' }, info.portable
         ? 'זו הגרסה הניידת. כשיש אינטרנט היא מורידה לבד גרסה חדשה, ומחליפה את הקובץ כשסוגרים את התוכנה. הנתונים (בתיקייה שליד הקובץ) נשארים.'
         : 'כשיש אינטרנט, התוכנה בודקת לבד אם יש גרסה חדשה ומורידה אותה. ההתקנה נעשית כשסוגרים את התוכנה. הנתונים שלך לא נפגעים בעדכון.'),
-      info.packaged ? el('button', { class: 'btn', onclick: () => { window.api.checkUpdate(); toast('בודק עדכונים...'); } }, '🔄 בדוק עכשיו') : el('p', { class: 'muted small' }, '(גרסת פיתוח - בלי עדכונים)')));
+      el('p', { class: App.updateStatus.state === 'error' ? 'neg' : '' }, 'מצב: ' + App.updateText(App.updateStatus)),
+      info.packaged ? el('div', { class: 'toolbar' },
+        el('button', { class: 'btn', onclick: () => { toast('בודק עדכונים...'); window.api.checkUpdate(); } }, '🔄 בדוק עכשיו'),
+        el('button', { class: 'btn', onclick: () => window.open('https://github.com/MOTEL-hue/camp-manager/releases/latest') }, '⬇️ הורדה ידנית'),
+        el('button', { class: 'btn', onclick: () => window.api.openDataDir() }, '📄 יומן העדכונים (update-log.txt)'))
+        : el('p', { class: 'muted small' }, '(גרסת פיתוח - בלי עדכונים)')));
   };
 
   async function backup() {

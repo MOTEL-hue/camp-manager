@@ -47,9 +47,67 @@
     nav.appendChild(item('הגדרות וגיבוי', '⚙️', r.view === 'settings', () => App.go('settings')));
   }
 
+  // מצב העדכון: בתיבה בצד, ובמסך ההגדרות (App.updateStatus).
+  function updateText(s) {
+    switch (s.state) {
+      case 'checking': return 'בודק אם יש גרסה חדשה...';
+      case 'none': return 'יש לך את הגרסה העדכנית ביותר (' + (s.version || '') + ').';
+      case 'available': return 'נמצאה גרסה ' + s.version + ', מתחיל להוריד...';
+      case 'downloading': return 'מוריד גרסה חדשה... ' + (s.percent || 0) + '%';
+      case 'ready': return 'גרסה ' + s.version + ' מוכנה. היא תותקן לבד כשתסגור את התוכנה.';
+      case 'applying': return 'מחליף לגרסה החדשה...';
+      case 'portable': return 'יש גרסה חדשה (' + s.version + ').';
+      case 'error': return 'העדכון האוטומטי נכשל: ' + (s.message || '') + '. אפשר להוריד את הגרסה החדשה ידנית.';
+      default: return 'עוד לא נבדק.';
+    }
+  }
+
+  // פס עליון בולט כשיש עדכון: מוריד / מוכן / נכשל.
+  let bannerClosed = '';
+  function renderBanner(s) {
+    const b = document.getElementById('update-banner');
+    clear(b);
+    const show = ['available', 'downloading', 'ready', 'portable', 'error'].includes(s.state) && bannerClosed !== s.state + s.version;
+    b.classList.toggle('hidden', !show);
+    b.classList.toggle('error', s.state === 'error');
+    document.body.classList.toggle('has-banner', show);
+    if (!show) return;
+    const title = s.state === 'error' ? '⚠️ ' : '🎉 יש עדכון חדש · ';
+    b.appendChild(el('span', null, title + updateText(s)));
+    if (s.state === 'downloading') b.appendChild(el('div', { class: 'bar' }, el('div', { style: { width: (s.percent || 0) + '%' } })));
+    b.appendChild(el('div', { class: 'grow' }));
+    if (s.state === 'ready') b.appendChild(el('button', { class: 'btn small primary', onclick: installNow }, 'עדכן עכשיו'));
+    if (s.state === 'portable' || s.state === 'error') b.appendChild(el('button', { class: 'btn small primary', onclick: () => window.open(s.url) }, 'להורדה ידנית'));
+    b.appendChild(el('button', { class: 'btn small', title: 'הסתר', onclick: () => { bannerClosed = s.state + s.version; renderBanner(s); } }, '✕'));
+  }
+
+  async function installNow() {
+    await Store.flush();
+    window.api.installUpdate();
+  }
+
+  function readyPopup(s) {
+    UI.modal({
+      title: '🎉 יש עדכון חדש!',
+      body: el('div', null,
+        el('p', null, `גרסה ${s.version} הורדה ומוכנה להתקנה.`),
+        el('p', { class: 'muted' }, 'אפשר לעדכן עכשיו (התוכנה תיסגר ותיפתח מחדש תוך כמה שניות), או להמשיך לעבוד - העדכון יותקן לבד כשסוגרים את התוכנה. הנתונים לא נפגעים.')),
+      buttons: [
+        { label: 'עדכן עכשיו', primary: true, onclick: installNow },
+        { label: 'אחר כך' },
+      ],
+    });
+  }
+
   function setupUpdates() {
     const box = document.getElementById('update-box');
+    window.api.updateStatus && window.api.updateStatus().then((s) => { if (s) App.updateStatus = s; });
     window.api.onUpdate((s) => {
+      const changed = App.updateStatus.state !== s.state;
+      App.updateStatus = s;
+      if (changed && App.route.view === 'settings') App.render();
+      renderBanner(s);
+      if (s.state === 'ready' && changed) readyPopup(s);
       clear(box);
       if (s.state === 'downloading') {
         box.classList.remove('hidden');
@@ -58,10 +116,10 @@
         box.classList.remove('hidden');
         box.appendChild(document.createTextNode('גרסה ' + s.version + ' מוכנה. היא תותקן לבד כשתסגור את התוכנה.'));
         box.appendChild(el('button', { class: 'btn small primary', onclick: async () => { await Store.flush(); window.api.installUpdate(); } }, 'עדכן עכשיו'));
-      } else if (s.state === 'portable') {
+      } else if (s.state === 'portable' || s.state === 'error') {
         box.classList.remove('hidden');
-        box.appendChild(document.createTextNode('יש גרסה חדשה (' + s.version + '). אפשר להוריד אותה מכאן ולהחליף את הקובץ; הנתונים נשארים.'));
-        box.appendChild(el('button', { class: 'btn small primary', onclick: () => window.open(s.url) }, 'להורדה'));
+        box.appendChild(document.createTextNode(updateText(s)));
+        box.appendChild(el('button', { class: 'btn small primary', onclick: () => window.open(s.url) }, 'להורדה ידנית'));
       } else {
         box.classList.add('hidden');
       }
@@ -96,6 +154,8 @@
 
   window.addEventListener('beforeunload', () => { Store.flush(); });
 
+  App.updateStatus = { state: 'idle' };
+  App.updateText = updateText;
   window.App = App;
 
   (async function start() {

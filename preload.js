@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('api', {
   printToPdf: (opts) => ipcRenderer.invoke('print:pdf', opts),
   print: () => ipcRenderer.invoke('print:print'),
   checkUpdate: () => ipcRenderer.invoke('update:check'),
+  updateStatus: () => ipcRenderer.invoke('update:status'),
   installUpdate: () => ipcRenderer.invoke('update:install'),
   onUpdate: (cb) => ipcRenderer.on('update:status', (_e, s) => cb(s)),
 });
