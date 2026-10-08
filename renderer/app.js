@@ -47,13 +47,18 @@
     nav.appendChild(item('הגדרות וגיבוי', '⚙️', r.view === 'settings', () => App.go('settings')));
   }
 
+  const mb = (n) => ((n || 0) / (1024 * 1024)).toFixed(1);
+
   // מצב העדכון: בתיבה בצד, ובמסך ההגדרות (App.updateStatus).
   function updateText(s) {
     switch (s.state) {
       case 'checking': return 'בודק אם יש גרסה חדשה...';
       case 'none': return 'יש לך את הגרסה העדכנית ביותר (' + (s.version || '') + ').';
       case 'available': return 'נמצאה גרסה ' + s.version + ', מתחיל להוריד...';
-      case 'downloading': return 'מוריד גרסה חדשה... ' + (s.percent || 0) + '%';
+      case 'downloading':
+        // ברשת מסוננת (כמו נטפרי) הקובץ נבדק לפני שהוא מגיע, וההתקדמות נשארת על 0 כמה דקות.
+        if (!s.received) return 'מתחיל להוריד גרסה חדשה... (ברשת מסוננת הקובץ נבדק קודם, וזה יכול לקחת כמה דקות. אפשר להמשיך לעבוד)';
+        return 'מוריד גרסה חדשה... ' + (s.percent || 0) + '% (' + mb(s.received) + ' מתוך ' + mb(s.total) + ' MB)';
       case 'ready': return 'גרסה ' + s.version + ' מוכנה. היא תותקן לבד כשתסגור את התוכנה.';
       case 'applying': return 'מחליף לגרסה החדשה...';
       case 'portable': return 'יש גרסה חדשה (' + s.version + ').';
@@ -111,7 +116,7 @@
       clear(box);
       if (s.state === 'downloading') {
         box.classList.remove('hidden');
-        box.appendChild(document.createTextNode('מוריד גרסה חדשה... ' + (s.percent || 0) + '%'));
+        box.appendChild(document.createTextNode(updateText(s)));
       } else if (s.state === 'ready') {
         box.classList.remove('hidden');
         box.appendChild(document.createTextNode('גרסה ' + s.version + ' מוכנה. היא תותקן לבד כשתסגור את התוכנה.'));

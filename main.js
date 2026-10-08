@@ -225,6 +225,37 @@ ipcMain.handle('cloud:login', async (_e, { mode, url, email, password, name }) =
   if (r.ok) writeSecrets({ cloudToken: r.data.token, cloudEmail: r.data.user.email, cloudName: r.data.user.name || '' });
   return r.ok ? { ok: true, user: r.data.user } : r;
 });
+// כניסה עם Google: חלון קטן עם דף הכניסה של האתר. בסוף האתר מעביר לכתובת עם #google=<טוקן>,
+// והחלון נסגר מיד. הסיסמה של Google נשארת אצל Google - התוכנה מקבלת רק טוקן של מרכז הקייטנות.
+ipcMain.handle('cloud:google', async (_e, { url } = {}) => {
+  if (url) writeSecrets({ cloudUrl: String(url).trim() });
+  const base = cloudBase(readSecrets());
+  const result = await new Promise((resolve) => {
+    const g = new BrowserWindow({
+      parent: win, modal: true, width: 520, height: 680, autoHideMenuBar: true, title: 'כניסה עם Google',
+      webPreferences: { partition: 'camps-google', contextIsolation: true, nodeIntegration: false },
+    });
+    let done = false;
+    const finish = (r) => { if (done) return; done = true; resolve(r); if (!g.isDestroyed()) g.close(); };
+    const look = (_ev, u) => {
+      if (!String(u).startsWith(base + '/#')) return;
+      const h = new URLSearchParams(String(u).split('#')[1]);
+      if (h.get('google')) finish({ ok: true, token: h.get('google') });
+      else finish({ ok: false, error: h.get('error') || 'הכניסה עם Google לא הושלמה' });
+    };
+    g.webContents.on('will-redirect', look);
+    g.webContents.on('will-navigate', look);
+    g.webContents.on('did-navigate', look);
+    g.webContents.on('did-fail-load', (_ev, code, desc, u, isMain) => { if (isMain && code !== -3) finish({ ok: false, error: 'אין חיבור לאתר (' + desc + ')' }); });
+    g.on('closed', () => finish({ ok: false, cancelled: true }));
+    g.loadURL(base + '/google/login?app=1');
+  });
+  if (!result.ok) return result;
+  const me = await cloudFetch('GET', '/api/me', null, result.token);
+  if (!me.ok) return me;
+  writeSecrets({ cloudToken: result.token, cloudEmail: me.data.user.email, cloudName: me.data.user.name || '' });
+  return { ok: true, user: me.data.user };
+});
 ipcMain.handle('cloud:logout', async () => {
   await cloudFetch('POST', '/api/logout');
   writeSecrets({ cloudToken: '', cloudEmail: '', cloudName: '' });
@@ -271,16 +302,21 @@ ipcMain.handle('print:print', () => new Promise((resolve) => {
 // מצב העדכון האחרון נשמר כדי שמסך ההגדרות יוכל להציג אותו, וכל שלב נרשם ליומן בתיקיית הנתונים -
 // כך אפשר לראות מה נכשל אצל המשתמש, בלי כלי פיתוח.
 let updateStatus = { state: 'idle' };
-function sendUpdate(state, extra) {
-  updateStatus = Object.assign({ state, at: new Date().toISOString(), url: RELEASES_URL }, extra || {});
-  const quiet = state === 'downloading' && (extra || {}).percent % 10 !== 0;
-  if (!quiet) try {
+function logUpdate(text) {
+  try {
     ensureDirs();
-    const line = new Date().toISOString() + ' ' + state + ' ' + JSON.stringify(extra || {}) + '\n';
     const logFile = path.join(DATA_DIR, 'update-log.txt');
     if (fs.existsSync(logFile) && fs.statSync(logFile).size > 200000) fs.renameSync(logFile, logFile + '.old');
-    fs.appendFileSync(logFile, line, 'utf8');
+    fs.appendFileSync(logFile, new Date().toISOString() + ' ' + text + '\n', 'utf8');
   } catch (_) { /* יומן הוא עזר בלבד */ }
+}
+let lastLoggedPct = -1;
+function sendUpdate(state, extra) {
+  updateStatus = Object.assign({ state, at: new Date().toISOString(), url: RELEASES_URL }, extra || {});
+  // בהורדה נרשמת שורה רק כל 10%, כדי שהיומן לא יתמלא.
+  const pct = state === 'downloading' ? Math.floor(((extra || {}).percent || 0) / 10) : -1;
+  if (pct !== lastLoggedPct || state !== 'downloading') logUpdate(state + ' ' + JSON.stringify(extra || {}));
+  lastLoggedPct = pct;
   if (win && !win.isDestroyed()) win.webContents.send('update:status', updateStatus);
 }
 ipcMain.handle('update:status', () => updateStatus);
@@ -298,6 +334,8 @@ function newerVersion(a, b) {
 // גרסה ניידת: electron-updater לא תומך בה, ולכן מורידים לבד את קובץ ה-EXE החדש לתיקייה שליד הקובץ,
 // וכשהתוכנה נסגרת סקריפט PowerShell קטן מחליף את הקובץ (מחכה שהקובץ הישן ישתחרר) ומפעיל מחדש.
 // הנתונים בתיקייה שליד הקובץ לא נוגעים בהם.
+const STALL_MS = 15 * 60 * 1000;
+
 function setupPortableUpdater() {
   const exePath = process.env.PORTABLE_EXECUTABLE_FILE;
   const send = sendUpdate;
@@ -321,14 +359,37 @@ function setupPortableUpdater() {
         if (item.getURL() !== asset.browser_download_url && !item.getURLChain().includes(asset.browser_download_url)) return;
         ses.removeListener('will-download', onWill);
         item.setSavePath(tmp);
-        let lastPct = -1;
+        let lastMb = -1;
+        let lastBytes = 0;
+        let lastMove = Date.now();
+        // הורדה שלא זזה רבע שעה (חיבור שנתקע, או סינון שלא משחרר את הקובץ) - מבטלים ומדווחים,
+        // במקום להישאר על 0% לנצח. הבדיקה הבאה (כל שעתיים, או "בדוק עכשיו") מתחילה מחדש.
+        let stalled = false;
+        const watchdog = setInterval(() => {
+          const got = item.getReceivedBytes();
+          if (got !== lastBytes) { lastBytes = got; lastMove = Date.now(); return; }
+          if (Date.now() - lastMove > STALL_MS) { stalled = true; item.cancel(); }
+        }, 30 * 1000);
         item.on('updated', (_ev, state) => {
-          if (state === 'interrupted' && item.canResume()) { item.resume(); return; }
+          if (state === 'interrupted') {
+            logUpdate('download interrupted, canResume=' + item.canResume());
+            if (item.canResume()) item.resume(); else item.cancel();
+            return;
+          }
+          const received = item.getReceivedBytes();
           const total = item.getTotalBytes() || asset.size;
-          const pct = Math.min(100, Math.floor((item.getReceivedBytes() / total) * 100));
-          if (pct !== lastPct) { lastPct = pct; send('downloading', { percent: pct }); }
+          const mb = Math.floor(received / (1024 * 1024));
+          if (mb !== lastMb) {
+            lastMb = mb;
+            send('downloading', { percent: Math.min(100, Math.floor((received / total) * 100)), received, total });
+          }
         });
-        item.once('done', (_ev, state) => (state === 'completed' ? resolve() : reject(new Error('ההורדה נעצרה (' + state + ')'))));
+        item.once('done', (_ev, state) => {
+          clearInterval(watchdog);
+          if (state === 'completed') resolve();
+          else if (stalled) reject(new Error('ההורדה נתקעה ולא התקדמה רבע שעה. ננסה שוב אוטומטית בעוד שעתיים'));
+          else reject(new Error('ההורדה נעצרה (' + state + ')'));
+        });
       };
       ses.on('will-download', onWill);
       ses.downloadURL(asset.browser_download_url);
@@ -431,7 +492,7 @@ function setupUpdater() {
   autoUpdater.on('checking-for-update', () => send('checking'));
   autoUpdater.on('update-available', (i) => send('available', { version: i.version }));
   autoUpdater.on('update-not-available', () => send('none', { version: app.getVersion() }));
-  autoUpdater.on('download-progress', (p) => send('downloading', { percent: Math.round(p.percent) }));
+  autoUpdater.on('download-progress', (p) => send('downloading', { percent: Math.round(p.percent), received: p.transferred, total: p.total }));
   autoUpdater.on('update-downloaded', (i) => send('ready', { version: i.version }));
   autoUpdater.on('error', (err) => send('error', { message: errText(err) }));
   ipcMain.handle('update:install', () => autoUpdater.quitAndInstall());

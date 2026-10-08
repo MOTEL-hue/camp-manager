@@ -177,7 +177,16 @@
     card.appendChild(el('div', { class: 'form-row' }, field('שם (רק לחשבון חדש)', name), field('כתובת האתר', url)));
     card.appendChild(el('div', { class: 'toolbar' },
       el('button', { class: 'btn primary', onclick: () => go('login') }, 'כניסה'),
-      el('button', { class: 'btn', onclick: () => go('register') }, 'פתיחת חשבון חדש')));
+      el('button', { class: 'btn', onclick: () => go('register') }, 'פתיחת חשבון חדש'),
+      el('span', { class: 'muted' }, 'או'),
+      el('button', { class: 'btn', onclick: async () => {
+        const r = await window.api.cloudGoogle({ url: url.value });
+        if (!r.ok) { if (!r.cancelled) toast(r.error); return; }
+        toast('מחובר/ת ✓');
+        await Cloud.refreshAccount();
+        Cloud.syncAll();
+        App.render();
+      } }, 'כניסה עם Google')));
   };
 
   // ---------- הגדרות הפרויקט: סנכרון ושיתוף ----------

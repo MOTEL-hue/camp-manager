@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('api', {
   pdfBuffer: () => ipcRenderer.invoke('print:pdfBuffer'),
   cloud: (method, path, body) => ipcRenderer.invoke('cloud:request', method, path, body),
   cloudLogin: (opts) => ipcRenderer.invoke('cloud:login', opts),
+  cloudGoogle: (opts) => ipcRenderer.invoke('cloud:google', opts),
   cloudLogout: () => ipcRenderer.invoke('cloud:logout'),
   onUpdate: (cb) => ipcRenderer.on('update:status', (_e, s) => cb(s)),
 });
