@@ -201,8 +201,25 @@
       el('button', { class: 'btn', onclick: () => viaWindow('site') }, 'כניסה עם החשבון באתר'),
       el('button', { class: 'btn', onclick: () => viaWindow('google') }, 'כניסה עם Google')));
     card.appendChild(el('p', { class: 'muted small' }, 'יש לך חשבון באתר הראשי? "כניסה עם החשבון באתר" - בלי לפתוח חשבון נוסף.'));
+    // הכניסה נפתחת בדפדפן הרגיל. בתוכנה מוצג קוד אימות (אותו קוד מופיע בדפדפן) וחלון המתנה.
     async function viaWindow(via) {
-      const r = await window.api.cloudGoogle({ url: url.value, via });
+      const started = await window.api.browserLoginStart({ url: url.value, via });
+      if (!started.ok) { toast(started.error); return; }
+      let finished = false;
+      const closeWaiting = UI.modal({
+        title: 'ממשיכים בדפדפן',
+        sticky: true,
+        body: el('div', null,
+          el('p', null, 'נפתח דף בדפדפן שלך. שם בוחרים את החשבון ומסיימים את הכניסה.'),
+          el('p', null, 'בדקו שבדפדפן מוצג אותו קוד:'),
+          el('p', { style: { fontSize: '40px', fontWeight: '700', letterSpacing: '8px', direction: 'ltr', textAlign: 'center', color: '#2f6fde' } }, started.code),
+          el('p', { class: 'muted' }, 'אחרי שמסיימים בדפדפן, התוכנה תתחבר לבד. אם הדף לא נפתח, בדקו שיש דפדפן ברירת מחדל.')),
+        buttons: [{ label: 'ביטול' }],
+        onclose: () => { if (!finished) window.api.browserLoginCancel(); },
+      });
+      const r = await window.api.browserLoginWait();
+      finished = true;
+      closeWaiting();
       if (!r.ok) { if (!r.cancelled) toast(r.error); return; }
       toast('מחובר/ת ✓');
       await Cloud.refreshAccount();

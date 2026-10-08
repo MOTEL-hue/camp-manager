@@ -266,52 +266,48 @@ ipcMain.handle('cloud:login', async (_e, { mode, url, email, password, name }) =
   }
   return r.ok ? { ok: true, user: r.data.user } : r;
 });
-// כניסה עם Google או עם החשבון באתר הראשי: חלון קטן עם דף הכניסה. בסוף האתר מעביר לכתובת עם
-// #google=<טוקן>, והחלון נסגר מיד. הסיסמה נשארת אצל Google / האתר - התוכנה מקבלת רק טוקן של מרכז הקייטנות.
-ipcMain.handle('cloud:google', async (_e, { url, via } = {}) => {
+// כניסה עם Google או עם החשבון באתר הראשי: נפתחת בדפדפן הרגיל (Google חוסמת כניסה מחלון בתוך תוכנה,
+// ולכן "הבא" לא ממשיך שם). בדפדפן מופיע קוד אימות קצר (אותו קוד מוצג בתוכנה), ואחרי שמסיימים שם - התוכנה,
+// ששואלת את האתר כל כמה שניות עם סוד שרק היא מכירה, מקבלת טוקן פעם אחת. הסיסמה נשארת אצל Google / האתר.
+let browserLogin = null; // {verifier, challenge, base, cancelled}
+const challengeOf = (verifier) => require('crypto').createHash('sha256').update(verifier).digest('hex');
+const loginCode = (challenge) => String(parseInt(challenge.slice(0, 8), 16) % 10000).padStart(4, '0');
+
+ipcMain.handle('cloud:browser-login-start', async (_e, { url, via } = {}) => {
   const bad = setCloudUrl(url);
   if (bad) return { ok: false, error: bad };
   const base = cloudBase(readSecrets());
-  const result = await new Promise((resolve) => {
-    const g = new BrowserWindow({
-      parent: win, modal: true, width: 520, height: 680, autoHideMenuBar: true, title: 'כניסה',
-      webPreferences: { partition: 'camps-google', contextIsolation: true, nodeIntegration: false },
-    });
-    // החלון מציג רק את האתר שלנו ואת דף הכניסה של Google: מעבר לכל אתר אחר נחסם, חלונות חדשים לא
-    // נפתחים, ובקשות הרשאה (מצלמה, מיקום...) נדחות.
-    const baseOrigin = new URL(base).origin;
-    const allowed = (u) => {
-      try {
-        const x = new URL(u);
-        return x.origin === baseOrigin || (x.protocol === 'https:' && /(^|\.)google\.com$/.test(x.hostname));
-      } catch (_) { return false; }
-    };
-    g.webContents.session.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
-    g.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    const guard = (ev, u) => { if (!allowed(u)) ev.preventDefault(); };
-    g.webContents.on('will-navigate', guard);
-    g.webContents.on('will-redirect', guard);
-    let done = false;
-    const finish = (r) => { if (done) return; done = true; resolve(r); if (!g.isDestroyed()) g.close(); };
-    const look = (_ev, u) => {
-      if (!String(u).startsWith(base + '/#')) return;
-      const h = new URLSearchParams(String(u).split('#')[1]);
-      if (h.get('google')) finish({ ok: true, token: h.get('google') });
-      else finish({ ok: false, error: h.get('error') || 'הכניסה עם Google לא הושלמה' });
-    };
-    g.webContents.on('will-redirect', look);
-    g.webContents.on('will-navigate', look);
-    g.webContents.on('did-navigate', look);
-    g.webContents.on('did-fail-load', (_ev, code, desc, u, isMain) => { if (isMain && code !== -3) finish({ ok: false, error: 'אין חיבור לאתר (' + desc + ')' }); });
-    g.on('closed', () => finish({ ok: false, cancelled: true }));
-    g.loadURL(base + (via === 'site' ? '/site-login?app=1' : '/google/login?app=1'));
-  });
-  if (!result.ok) return result;
-  const me = await cloudFetch('GET', '/api/me', null, result.token);
-  if (!me.ok) return me;
-  try { writeSecrets({ cloudToken: result.token, cloudEmail: me.data.user.email, cloudName: me.data.user.name || '' }); } catch (err) { return { ok: false, error: err.message }; }
-  return { ok: true, user: me.data.user };
+  const verifier = require('crypto').randomBytes(32).toString('hex');
+  const challenge = challengeOf(verifier);
+  browserLogin = { verifier, challenge, base, cancelled: false };
+  const target = base + '/app-login?c=' + challenge + (via === 'google' ? '&via=google' : '&via=site');
+  if (process.env.CAMP_MANAGER_DATA) { // בבדיקות: לא פותחים דפדפן, רושמים את הכתובת
+    try { ensureDirs(); fs.writeFileSync(path.join(DATA_DIR, 'last-login-url.txt'), target); } catch (_) { /* בדיקה בלבד */ }
+  } else {
+    await shell.openExternal(target);
+  }
+  return { ok: true, code: loginCode(challenge) };
 });
+ipcMain.handle('cloud:browser-login-wait', async () => {
+  const cur = browserLogin;
+  if (!cur) return { ok: false, error: 'לא התחילה כניסה' };
+  const deadline = Date.now() + 5 * 60 * 1000;
+  let last = null;
+  while (!cur.cancelled && Date.now() < deadline) {
+    const r = await cloudFetch('POST', '/api/app-login', { verifier: cur.verifier }, '');
+    if (r.ok && r.data.token) {
+      browserLogin = null;
+      try { writeSecrets({ cloudToken: r.data.token, cloudEmail: r.data.user.email, cloudName: r.data.user.name || '' }); } catch (err) { return { ok: false, error: err.message }; }
+      return { ok: true, user: r.data.user };
+    }
+    last = r.ok ? null : r;
+    await new Promise((res) => setTimeout(res, 2000));
+  }
+  if (browserLogin === cur) browserLogin = null;
+  if (cur.cancelled) return { ok: false, cancelled: true };
+  return last && last.offline ? last : { ok: false, error: 'הכניסה לא הושלמה בזמן. אפשר לנסות שוב.' };
+});
+ipcMain.handle('cloud:browser-login-cancel', () => { if (browserLogin) browserLogin.cancelled = true; return true; });
 ipcMain.handle('cloud:logout', async () => {
   await cloudFetch('POST', '/api/logout');
   writeSecrets({ cloudToken: '', cloudEmail: '', cloudName: '' });
