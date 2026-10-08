@@ -179,14 +179,17 @@
       el('button', { class: 'btn primary', onclick: () => go('login') }, 'כניסה'),
       el('button', { class: 'btn', onclick: () => go('register') }, 'פתיחת חשבון חדש'),
       el('span', { class: 'muted' }, 'או'),
-      el('button', { class: 'btn', onclick: async () => {
-        const r = await window.api.cloudGoogle({ url: url.value });
-        if (!r.ok) { if (!r.cancelled) toast(r.error); return; }
-        toast('מחובר/ת ✓');
-        await Cloud.refreshAccount();
-        Cloud.syncAll();
-        App.render();
-      } }, 'כניסה עם Google')));
+      el('button', { class: 'btn', onclick: () => viaWindow('site') }, 'כניסה עם החשבון באתר'),
+      el('button', { class: 'btn', onclick: () => viaWindow('google') }, 'כניסה עם Google')));
+    card.appendChild(el('p', { class: 'muted small' }, 'יש לך חשבון באתר הראשי? "כניסה עם החשבון באתר" - בלי לפתוח חשבון נוסף.'));
+    async function viaWindow(via) {
+      const r = await window.api.cloudGoogle({ url: url.value, via });
+      if (!r.ok) { if (!r.cancelled) toast(r.error); return; }
+      toast('מחובר/ת ✓');
+      await Cloud.refreshAccount();
+      Cloud.syncAll();
+      App.render();
+    }
   };
 
   // ---------- הגדרות הפרויקט: סנכרון ושיתוף ----------

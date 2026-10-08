@@ -225,14 +225,14 @@ ipcMain.handle('cloud:login', async (_e, { mode, url, email, password, name }) =
   if (r.ok) writeSecrets({ cloudToken: r.data.token, cloudEmail: r.data.user.email, cloudName: r.data.user.name || '' });
   return r.ok ? { ok: true, user: r.data.user } : r;
 });
-// כניסה עם Google: חלון קטן עם דף הכניסה של האתר. בסוף האתר מעביר לכתובת עם #google=<טוקן>,
-// והחלון נסגר מיד. הסיסמה של Google נשארת אצל Google - התוכנה מקבלת רק טוקן של מרכז הקייטנות.
-ipcMain.handle('cloud:google', async (_e, { url } = {}) => {
+// כניסה עם Google או עם החשבון באתר הראשי: חלון קטן עם דף הכניסה. בסוף האתר מעביר לכתובת עם
+// #google=<טוקן>, והחלון נסגר מיד. הסיסמה נשארת אצל Google / האתר - התוכנה מקבלת רק טוקן של מרכז הקייטנות.
+ipcMain.handle('cloud:google', async (_e, { url, via } = {}) => {
   if (url) writeSecrets({ cloudUrl: String(url).trim() });
   const base = cloudBase(readSecrets());
   const result = await new Promise((resolve) => {
     const g = new BrowserWindow({
-      parent: win, modal: true, width: 520, height: 680, autoHideMenuBar: true, title: 'כניסה עם Google',
+      parent: win, modal: true, width: 520, height: 680, autoHideMenuBar: true, title: 'כניסה',
       webPreferences: { partition: 'camps-google', contextIsolation: true, nodeIntegration: false },
     });
     let done = false;
@@ -248,7 +248,7 @@ ipcMain.handle('cloud:google', async (_e, { url } = {}) => {
     g.webContents.on('did-navigate', look);
     g.webContents.on('did-fail-load', (_ev, code, desc, u, isMain) => { if (isMain && code !== -3) finish({ ok: false, error: 'אין חיבור לאתר (' + desc + ')' }); });
     g.on('closed', () => finish({ ok: false, cancelled: true }));
-    g.loadURL(base + '/google/login?app=1');
+    g.loadURL(base + (via === 'site' ? '/site-login?app=1' : '/google/login?app=1'));
   });
   if (!result.ok) return result;
   const me = await cloudFetch('GET', '/api/me', null, result.token);
