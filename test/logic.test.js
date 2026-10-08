@@ -218,3 +218,39 @@ test('יתרות לשלוחת הטלפון: לפי כל טלפון של הורה
   pr.archived = true;
   assert.deepStrictEqual(L.phoneBalances(pr), {});
 });
+
+test('ספקים: הזמנה לפי ספק, מחיר מהספק, ודוח עם מה ששולם', () => {
+  const p = L.newProject('מכירת ספרים', 'sale');
+  p.people = [{ id: 'a', firstName: 'א', custom: {} }, { id: 'b', firstName: 'ב', custom: {} }, { id: 'c', firstName: 'ג', custom: {} }];
+  p.products = [
+    { id: 'h', name: 'חומש', price: 50, supplierId: 's1' },
+    { id: 'g', name: 'גיאוגרפיה', price: 39, cost: 30, supplierId: 's2' },
+    { id: 'n', name: 'נפלאות הבורא', price: 25, supplierId: 's2' },
+    { id: 'x', name: 'אלגברה', price: 23 },
+  ];
+  p.suppliers = [{ id: 's1', name: 'חיים' }, { id: 's2', name: 'שמעון' }, { id: 's3', name: 'ספק בלי מוצרים' }];
+  L.ensureEnrollment(p, 'a').items = { h: 2, g: 1 };
+  L.ensureEnrollment(p, 'b').items = { h: 1, g: 1, n: 3 };
+  L.ensureEnrollment(p, 'c').items = { x: 2 };
+  const s = L.summary(p, p.people);
+  const o = L.supplierOrders(p, s);
+  const by = (id) => o.groups.find((g) => g.supplier.id === id);
+  assert.strictEqual(by('s1').total, 150); // 3 חומשים * 50
+  assert.strictEqual(by('s2').total, 135); // גיאוגרפיה 2*30 (מחיר מהספק) + נפלאות הבורא 3*25
+  assert.deepStrictEqual(by('s2').items.map((i) => i.price), [30, 25]);
+  assert.strictEqual(by('s3').items.length, 0);
+  assert.strictEqual(o.none.total, 46); // אלגברה, בלי ספק
+  assert.strictEqual(o.total, 150 + 135 + 46);
+  // מוצר ששויך לספק שנמחק נחשב "בלי ספק"
+  p.products[0].supplierId = 'gone';
+  assert.strictEqual(L.supplierOrders(p, s).none.items.length, 2);
+  p.products[0].supplierId = 's1';
+  p.expenses = [{ id: 'e1', name: 'מקדמה', amount: 100, supplierId: 's1' }, { id: 'e2', name: 'נסיעות', amount: 40 }];
+  const rep = L.supplierReport(p, s);
+  assert.deepStrictEqual([rep[0].total, rep[0].paid, rep[0].balance], [150, 100, 50]);
+  assert.strictEqual(rep[1].paid, 0);
+  // פרויקט חדש ופרויקט ישן מקבלים רשימת ספקים
+  assert.deepStrictEqual(L.newProject('x', 'sale').suppliers, []);
+  const old = L.migrate({ settings: {}, projects: [{ id: 'z', name: 'ישן', people: [], products: [] }] });
+  assert.deepStrictEqual(old.projects[0].suppliers, []);
+});

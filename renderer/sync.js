@@ -10,7 +10,7 @@
   'use strict';
 
   // אוספים שהפריטים בהם הם מערך עם id.
-  const ARRAYS = ['people', 'payments', 'expenses', 'products', 'marks', 'columns', 'links', 'reminders'];
+  const ARRAYS = ['people', 'payments', 'expenses', 'products', 'suppliers', 'marks', 'columns', 'links', 'reminders'];
   // שדות שלא עוברים בסנכרון (מצב מקומי של המחשב).
   const LOCAL = new Set(['cloud']);
   const SPECIAL = new Set(['id', 'tombstones', '_metaT', 'enrollments', ...ARRAYS, ...LOCAL]);

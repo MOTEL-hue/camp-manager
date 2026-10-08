@@ -16,7 +16,10 @@
 
 - הנתונים הם אובייקט JSON אחד (`Store.db`): `settings` ו-`projects`. לכל פרויקט רשימת אנשים משלו:
   `people`, `columns` (עמודות מותאמות), `hiddenFields`, ובנוסף `pricing`, `products`, `marks`,
-  `enrollments` (לפי מזהה אדם), `payments`, `expenses`. העתקה בין פרויקטים: `Importer.copyPeople`.
+  `enrollments` (לפי מזהה אדם), `payments`, `expenses`, `suppliers`. מוצר משויך לספק ב-`product.supplierId`
+  (ו-`product.cost` = מחיר מהספק), הוצאה ב-`expense.supplierId`. חישובים: `Logic.supplierOrders/supplierReport`;
+  מסכים: `renderer/views/suppliers.js`. רשימה חדשה בפרויקט = להוסיף ל-`Sync.ARRAYS` וגם ל-`ARRAYS` ב-
+  `camps/permissions.py` (אחרת היא לא מתמזגת בסנכרון ולא מוגנת בהרשאות). העתקה בין פרויקטים: `Importer.copyPeople`.
 - קישור בין פרויקטים (`project.links`): `Logic.coverage` מוצא את האדם בפרויקט המקושר לפי שם+כיתה.
   החישוב צריך את כל הפרויקטים, ולכן `Logic.setProjects` נקרא ב-`Store.commit` וב-`App.render`.
 - שלוש צורות הפצה: **מותקנת** (NSIS; עדכון דיפרנציאלי של `electron-updater`), **ניידת בתיקייה** (zip של

@@ -340,17 +340,22 @@
     const method = select(L.PAYMENT_METHODS, 'מזומן');
     const date = el('input', { type: 'date', value: today() });
     const note = el('input', { type: 'text', placeholder: 'הערה' });
+    const supplierOptions = [['', 'ספק (לא חובה)']].concat(pr.suppliers.map((x) => [x.id, x.name]));
+    const supplier = pr.suppliers.length ? select(supplierOptions, '') : null;
     const add = () => {
       if (!name.value.trim() || !L.num(amount.value)) { (name.value.trim() ? amount : name).focus(); return; }
-      pr.expenses.push({ id: L.uid(), name: name.value.trim(), amount: L.round2(L.num(amount.value)), method: method.value, date: date.value, note: note.value.trim() });
+      const ex = { id: L.uid(), name: name.value.trim(), amount: L.round2(L.num(amount.value)), method: method.value, date: date.value, note: note.value.trim() };
+      if (supplier && supplier.value) ex.supplierId = supplier.value;
+      pr.expenses.push(ex);
       App.changed();
       setTimeout(() => { const n = document.querySelector('main input[list=exp-dl]'); if (n) n.focus(); }, 20);
     };
     for (const i of [name, amount, note]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); });
+    const s = L.summary(pr, people());
+    root.appendChild(Views.suppliersCard(pr, s));
     root.appendChild(el('div', { class: 'card', style: { marginBottom: '14px' } },
       el('h3', null, 'הוספת הוצאה'),
-      el('div', { class: 'toolbar', style: { marginBottom: 0 } }, name, dl, amount, method, date, note, el('button', { class: 'btn primary', onclick: add }, 'הוסף'))));
-    const s = L.summary(pr, people());
+      el('div', { class: 'toolbar', style: { marginBottom: 0 } }, name, dl, amount, supplier, method, date, note, el('button', { class: 'btn primary', onclick: add }, 'הוסף'))));
     root.appendChild(el('div', { class: 'grid kpis', style: { marginBottom: '14px' } },
       kpi('סה"כ הוצאות', L.money(s.expenses), pr.expenses.length + ' פריטים', 'bad'),
       kpi('נגבה עד עכשיו', L.money(s.paid), null, 'ok'),
@@ -359,15 +364,16 @@
     if (!pr.expenses.length) return;
     const list = pr.expenses.slice().sort((a, b) => String(b.date).localeCompare(String(a.date)));
     root.appendChild(el('div', { class: 'table-wrap' }, el('table', { class: 'data' },
-      el('thead', null, el('tr', null, el('th', null, 'תאריך'), el('th', null, 'הוצאה'), el('th', { class: 'num' }, 'סכום'), el('th', null, 'אמצעי'), el('th', null, 'הערה'), el('th', null, ''))),
+      el('thead', null, el('tr', null, el('th', null, 'תאריך'), el('th', null, 'הוצאה'), pr.suppliers.length ? el('th', null, 'ספק') : null, el('th', { class: 'num' }, 'סכום'), el('th', null, 'אמצעי'), el('th', null, 'הערה'), el('th', null, ''))),
       el('tbody', null, list.map((x) => el('tr', null,
         el('td', null, el('input', { type: 'date', value: x.date, onchange: (e) => { x.date = e.target.value; Store.commit(); } })),
         el('td', null, el('input', { type: 'text', value: x.name, onchange: (e) => { x.name = e.target.value.trim(); Store.commit(); } })),
+        pr.suppliers.length ? el('td', null, select(supplierOptions, x.supplierId || '', { onchange: (e) => { if (e.target.value) x.supplierId = e.target.value; else delete x.supplierId; App.changed(); } })) : null,
         el('td', { class: 'num' }, el('input', { type: 'number', value: x.amount, style: { width: '110px' }, onchange: (e) => { x.amount = L.round2(L.num(e.target.value)); App.changed(); } })),
         el('td', null, select(L.PAYMENT_METHODS, x.method, { onchange: (e) => { x.method = e.target.value; App.changed(); } })),
         el('td', null, el('input', { type: 'text', value: x.note || '', onchange: (e) => { x.note = e.target.value.trim(); Store.commit(); } })),
         el('td', null, el('button', { class: 'btn small danger', onclick: () => { pr.expenses = pr.expenses.filter((y) => y !== x); App.changed(); toast('ההוצאה נמחקה', { label: 'בטל', fn: () => { Store.undo(); App.render(); } }); } }, '🗑'))))),
-      el('tfoot', null, el('tr', null, el('td'), el('td', null, 'סה"כ'), el('td', { class: 'num' }, L.money(s.expenses)), el('td'), el('td'), el('td'))))));
+      el('tfoot', null, el('tr', null, el('td'), el('td', null, 'סה"כ'), pr.suppliers.length ? el('td') : null, el('td', { class: 'num' }, L.money(s.expenses)), el('td'), el('td'), el('td'))))));
   }
 
   // ---------- סיכום ----------
@@ -437,14 +443,7 @@
   // ---------- הזמנה וחלוקה ----------
   function supplyTab(root, pr) {
     const s = L.summary(pr, people());
-    if (pr.products.length) {
-      root.appendChild(el('div', { class: 'card', style: { marginBottom: '16px' } },
-        el('div', { class: 'toolbar' }, el('h3', { style: { margin: 0 } }, 'רשימת הזמנה לספק'), el('div', { class: 'grow' }),
-          el('button', { class: 'btn small', onclick: () => printOrder(pr, s) }, '🖨️ הדפסה')),
-        el('table', { class: 'data' },
-          el('thead', null, el('tr', null, el('th', null, 'מוצר'), el('th', { class: 'num' }, 'כמות להזמנה'), el('th', { class: 'num' }, 'מחיר ליחידה'), el('th', { class: 'num' }, 'סה"כ'))),
-          el('tbody', null, pr.products.map((x) => { const q = (s.products[x.id] || {}).qty || 0; return el('tr', null, el('td', null, x.name), el('td', { class: 'num' }, q), el('td', { class: 'num' }, L.money(x.price)), el('td', { class: 'num' }, L.money(q * L.num(x.price)))); })))));
-    }
+    if (pr.products.length) root.appendChild(Views.supplierOrderCard(pr, s));
     const parts = people().filter((p) => L.isParticipant(pr, p)).sort((a, b) => (a.cls || '').localeCompare(b.cls || '', 'he') || (a.lastName || '').localeCompare(b.lastName || '', 'he'));
     const delivered = parts.filter((p) => (L.enrollment(pr, p.id) || {}).delivered).length;
     root.appendChild(el('div', { class: 'card' },
@@ -625,6 +624,8 @@
   }
   Views.receiptDialog = receiptDialog;
 
+  Views.printNode = (node, pdfName) => printNode(node, pdfName);
+
   async function printNode(node, pdfName) {
     const root = clear(document.getElementById('print-root'));
     root.appendChild(node);
@@ -644,11 +645,6 @@
   function printDebtors(pr, debtors) {
     printNode(printTable(`${pr.name} - רשימת חייבים`, ['שם', 'כיתה', 'טלפון', 'לתשלום', 'שולם', 'יתרה'],
       debtors.map(({ p, r }) => [L.fullName(p), p.cls || '', p.momPhone || p.dadPhone || '', L.money(r.due), L.money(r.paid), L.money(r.balance)])));
-  }
-
-  function printOrder(pr, s) {
-    printNode(printTable(`${pr.name} - הזמנה`, ['מוצר', 'כמות', 'מחיר', 'סה"כ'],
-      pr.products.map((x) => { const q = (s.products[x.id] || {}).qty || 0; return [x.name, q, L.money(x.price), L.money(q * L.num(x.price))]; })));
   }
 
   function printDistribution(pr, parts) {
@@ -680,11 +676,12 @@
       const p = personById(x.personId) || {};
       return [fmtDate(x.date), L.fullName(p), p.cls || '', L.num(x.amount), x.method || '', x.note || '', x.receiptNo || ''];
     }));
-    const exps = [['תאריך', 'הוצאה', 'סכום', 'אמצעי', 'הערה']].concat(pr.expenses.map((x) => [fmtDate(x.date), x.name, L.num(x.amount), x.method || '', x.note || '']));
+    const supName = (id) => (pr.suppliers.find((y) => y.id === id) || {}).name || '';
+    const exps = [['תאריך', 'הוצאה', 'ספק', 'סכום', 'אמצעי', 'הערה']].concat(pr.expenses.map((x) => [fmtDate(x.date), x.name, supName(x.supplierId), L.num(x.amount), x.method || '', x.note || '']));
     const s = L.summary(pr, ppl);
     const sum = [['נושא', 'סכום'], ['משתתפים', s.participants], ['סה"כ לתשלום', s.due], ['שולם', s.paid], ['נשאר לגבות', s.balance], ['הוצאות', s.expenses], ['מאזן עכשיו', s.net], ['מאזן צפוי', s.expectedNet], ['מזומן בקופה', s.cashOnHand], [], ['כיתה', 'משתתפים', 'לתשלום', 'שולם', 'יתרה']]
       .concat(Object.entries(s.byGroup).map(([g, v]) => [g, v.participants, v.due, v.paid, v.balance]));
     if (pr.products.length) sum.push([], ['מוצר', 'כמות', 'סכום'], ...pr.products.map((x) => [x.name, (s.products[x.id] || {}).qty || 0, (s.products[x.id] || {}).amount || 0]));
-    Views.saveXlsx(pr.name + '.xlsx', [{ name: 'רישום', rows: list }, { name: 'תשלומים', rows: pays }, { name: 'הוצאות', rows: exps }, { name: 'סיכום', rows: sum }]);
+    Views.saveXlsx(pr.name + '.xlsx', [{ name: 'רישום', rows: list }, { name: 'תשלומים', rows: pays }, { name: 'הוצאות', rows: exps }, ...Views.suppliersSheets(pr, s), { name: 'סיכום', rows: sum }]);
   }
 })();

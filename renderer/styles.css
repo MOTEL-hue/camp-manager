@@ -209,6 +209,12 @@ tr.dim td input { color: #9aa1b1; }
 .print-list h1 { font-size: 18px; }
 .print-list table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .print-list th, .print-list td { border: 1px solid #999; padding: 4px 6px; text-align: right; }
+.print-list h2 { font-size: 17px; margin: 0 0 4px; }
+.print-list table { margin-bottom: 10px; }
+.print-list .r-total { font-weight: 600; margin: 8px 0; }
+.print-list .sup-details { width: auto; min-width: 50%; }
+.print-list .sup-details th { background: #f0f0f0; width: 90px; }
+.checklist { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px 12px; max-height: 190px; overflow: auto; padding: 6px 2px; }
 
 @media print {
   body { display: block; background: #fff; overflow: visible; }

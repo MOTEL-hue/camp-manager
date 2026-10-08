@@ -63,7 +63,8 @@
       reminders: [], // יומן תזכורות: [{date, channel, sent, failed}]
       // מחיר הרישום: none (אין), flat (שווה לכולם), group (לפי כיתה/קבוצה)
       pricing: { mode: kind === 'camp' || !kind ? 'flat' : 'none', flat: 0, groups: {} },
-      products: [],
+      products: [], // [{id, name, price, cost?, supplierId?}] - cost = מחיר מהספק (אם שונה ממחיר המכירה)
+      suppliers: [], // [{id, name, contact, phone, email, address, notes}]
       marks: [], // עמודות סימון נוספות לפרויקט, למשל "אישור הורים"
       enrollments: {},
       payments: [],
@@ -433,6 +434,38 @@
 
   // יתרות לשלוחת הטלפון באתר: {טלפון: [{name, project, due, paid, balance, covered}]}. מחושב כאן,
   // כדי שהאתר רק יקרא תשובה מוכנה כשהורה מתקשר.
+  // ---------- ספקים ----------
+  // כל מוצר יכול להיות משויך לספק (product.supplierId). ההזמנה מתחלקת לפי ספק, עם סה"כ לכל ספק. מחיר
+  // ההזמנה הוא "מחיר מהספק" (product.cost) אם הוזן, ואחרת מחיר המכירה. s = תוצאת summary (כמויות לכל מוצר).
+  function unitCost(prod) {
+    const c = prod.cost;
+    return c === undefined || c === null || c === '' ? num(prod.price) : num(c);
+  }
+
+  function supplierOrders(project, s) {
+    const mk = (supplier) => ({ supplier, items: [], total: 0 });
+    const groups = (project.suppliers || []).map(mk);
+    const byId = new Map(groups.map((g) => [g.supplier.id, g]));
+    const none = mk(null); // מוצרים שעוד לא שויכו לספק
+    for (const prod of project.products || []) {
+      const qty = num(((s && s.products) || {})[prod.id] && s.products[prod.id].qty);
+      const price = unitCost(prod);
+      const g = (prod.supplierId && byId.get(prod.supplierId)) || none;
+      g.items.push({ product: prod, qty, price, total: round2(qty * price) });
+      g.total = round2(g.total + qty * price);
+    }
+    return { groups, none, total: round2(groups.reduce((a, g) => a + g.total, none.total)) };
+  }
+
+  // דוח לכל ספק: הפרטים, מה להזמין ובכמה, כמה כבר שולם לו (הוצאות שסומנו על שמו) וכמה נשאר.
+  function supplierReport(project, s) {
+    return supplierOrders(project, s).groups.map((g) => {
+      const expenses = (project.expenses || []).filter((x) => x.supplierId === g.supplier.id);
+      const paid = round2(expenses.reduce((a, x) => a + num(x.amount), 0));
+      return { supplier: g.supplier, items: g.items, total: g.total, expenses, paid, balance: round2(g.total - paid) };
+    });
+  }
+
   function phoneBalances(project) {
     const out = {};
     if (!project || project.archived || project.kind === 'list') return out;
@@ -448,7 +481,7 @@
   }
 
   return {
-    phoneBalances,
+    phoneBalances, unitCost, supplierOrders, supplierReport,
     reminderGroups, fillTemplate, DEFAULT_TEMPLATES,
     isYes, migrate, setProjects, coverage, coveredPart, grossDue, findMatch, LINK_CONDITIONS,
     PERSON_FIELDS, PAYMENT_METHODS, STATUS_LABEL,
