@@ -83,6 +83,10 @@ function createWindow() {
     if (/^(https?|mailto|tel):/.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
+  // החלון הראשי מציג רק את הממשק המקומי: אין מעבר לדפים אחרים (שהיו מקבלים גישה ל-window.api),
+  // ובקשות הרשאה נדחות.
+  win.webContents.on('will-navigate', (e) => e.preventDefault());
+  win.webContents.session.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
   win.webContents.on('before-input-event', (e, input) => {
     if (input.type === 'keyDown' && input.key === 'F12' && !app.isPackaged) win.webContents.toggleDevTools();
   });
@@ -91,12 +95,17 @@ function createWindow() {
 // סיסמאות (Gmail, ימות המשיח) נשמרות מוצפנות בהצפנה של ווינדוס, בקובץ נפרד - לא ב-db.json,
 // כדי שלא ייכנסו לקובצי גיבוי שאולי נשלחים הלאה.
 const SECRETS_FILE = path.join(DATA_DIR, 'secrets.json');
+// רק בהרצת פיתוח/בדיקות על לינוקס (בלי מאגר מפתחות): שמירה בלי הצפנה. בתוכנה המותקנת - אף פעם.
+const DEV_PLAIN_SECRETS = !app.isPackaged && process.platform === 'linux';
 function readSecrets() {
   try {
     const raw = JSON.parse(fs.readFileSync(SECRETS_FILE, 'utf8'));
     const out = {};
     for (const [k, v] of Object.entries(raw)) {
-      out[k] = v.enc && safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(Buffer.from(v.enc, 'base64')) : (v.plain || '');
+      // מפתח שהוצפן במחשב אחר (למשל גרסה ניידת שעברה מחשב) לא נפתח - מדלגים רק עליו.
+      try {
+        out[k] = v.enc && safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(Buffer.from(v.enc, 'base64')) : (DEV_PLAIN_SECRETS && v.plain) || '';
+      } catch (_) { out[k] = ''; }
     }
     return out;
   } catch (_) {
@@ -110,7 +119,12 @@ function writeSecrets(values) {
   const raw = {};
   for (const [k, v] of Object.entries(cur)) {
     if (!v) continue;
-    raw[k] = safeStorage.isEncryptionAvailable() ? { enc: safeStorage.encryptString(String(v)).toString('base64') } : { plain: String(v) };
+    // בלי ההצפנה של ווינדוס לא שומרים סיסמאות בכלל (ולא בטקסט גלוי).
+    if (!safeStorage.isEncryptionAvailable()) {
+      if (DEV_PLAIN_SECRETS) { raw[k] = { plain: String(v) }; continue; }
+      throw new Error('ההצפנה של ווינדוס לא זמינה במחשב הזה, ולכן אי אפשר לשמור סיסמאות');
+    }
+    raw[k] = { enc: safeStorage.encryptString(String(v)).toString('base64') };
   }
   fs.writeFileSync(SECRETS_FILE, JSON.stringify(raw), 'utf8');
 }
@@ -124,8 +138,8 @@ ipcMain.handle('secrets:set', (_e, values) => {
   const allowed = ['gmailUser', 'gmailPass', 'yemotLine', 'yemotPass'];
   const clean = {};
   for (const k of allowed) if (values && typeof values[k] === 'string') clean[k] = k === 'gmailPass' ? values[k].replace(/\s+/g, '') : values[k].trim();
-  writeSecrets(clean);
-  return true;
+  try { writeSecrets(clean); } catch (err) { return { ok: false, error: err.message }; }
+  return { ok: true };
 });
 
 // מייל מה-Gmail של המשתמש, עם "סיסמת אפליקציה" של גוגל.
@@ -198,6 +212,21 @@ function cloudBase(s) {
   const url = s.cloudUrl && !/camp-manager-sync\.onrender\.com/.test(s.cloudUrl) ? s.cloudUrl : DEFAULT_CLOUD_URL;
   return url.replace(/\/+$/, '');
 }
+// כתובת אתר הסנכרון: רק https (או מחשב מקומי לבדיקות). כתובת שמשתנה מנתקת את החשבון, כדי שהטוקן
+// והנתונים לא יישלחו לאתר אחר.
+function setCloudUrl(url) {
+  url = String(url || '').trim().replace(/\/+$/, '');
+  if (!url) return null;
+  let u;
+  try { u = new URL(url); } catch (_) { return 'כתובת האתר לא תקינה'; }
+  const local = u.protocol === 'http:' && /^(127\.0\.0\.1|localhost)$/.test(u.hostname);
+  if (u.protocol !== 'https:' && !local) return 'כתובת האתר חייבת להתחיל ב-https://';
+  const s = readSecrets();
+  if (url !== cloudBase(s)) {
+    try { writeSecrets({ cloudUrl: url, cloudToken: '', cloudEmail: '', cloudName: '' }); } catch (err) { return err.message; }
+  }
+  return null;
+}
 async function cloudFetch(method, urlPath, body, tokenOverride) {
   const s = readSecrets();
   const base = cloudBase(s);
@@ -220,21 +249,39 @@ ipcMain.handle('cloud:request', (_e, method, urlPath, body) => {
   return cloudFetch(String(method || 'GET'), urlPath, body);
 });
 ipcMain.handle('cloud:login', async (_e, { mode, url, email, password, name }) => {
-  if (url) writeSecrets({ cloudUrl: String(url).trim() });
+  const bad = setCloudUrl(url);
+  if (bad) return { ok: false, error: bad };
   const r = await cloudFetch('POST', mode === 'register' ? '/api/register' : '/api/login', { email, password, name, device: require('os').hostname() }, '');
-  if (r.ok) writeSecrets({ cloudToken: r.data.token, cloudEmail: r.data.user.email, cloudName: r.data.user.name || '' });
+  if (r.ok) {
+    try { writeSecrets({ cloudToken: r.data.token, cloudEmail: r.data.user.email, cloudName: r.data.user.name || '' }); } catch (err) { return { ok: false, error: err.message }; }
+  }
   return r.ok ? { ok: true, user: r.data.user } : r;
 });
 // כניסה עם Google או עם החשבון באתר הראשי: חלון קטן עם דף הכניסה. בסוף האתר מעביר לכתובת עם
 // #google=<טוקן>, והחלון נסגר מיד. הסיסמה נשארת אצל Google / האתר - התוכנה מקבלת רק טוקן של מרכז הקייטנות.
 ipcMain.handle('cloud:google', async (_e, { url, via } = {}) => {
-  if (url) writeSecrets({ cloudUrl: String(url).trim() });
+  const bad = setCloudUrl(url);
+  if (bad) return { ok: false, error: bad };
   const base = cloudBase(readSecrets());
   const result = await new Promise((resolve) => {
     const g = new BrowserWindow({
       parent: win, modal: true, width: 520, height: 680, autoHideMenuBar: true, title: 'כניסה',
       webPreferences: { partition: 'camps-google', contextIsolation: true, nodeIntegration: false },
     });
+    // החלון מציג רק את האתר שלנו ואת דף הכניסה של Google: מעבר לכל אתר אחר נחסם, חלונות חדשים לא
+    // נפתחים, ובקשות הרשאה (מצלמה, מיקום...) נדחות.
+    const baseOrigin = new URL(base).origin;
+    const allowed = (u) => {
+      try {
+        const x = new URL(u);
+        return x.origin === baseOrigin || (x.protocol === 'https:' && /(^|\.)google\.com$/.test(x.hostname));
+      } catch (_) { return false; }
+    };
+    g.webContents.session.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+    g.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    const guard = (ev, u) => { if (!allowed(u)) ev.preventDefault(); };
+    g.webContents.on('will-navigate', guard);
+    g.webContents.on('will-redirect', guard);
     let done = false;
     const finish = (r) => { if (done) return; done = true; resolve(r); if (!g.isDestroyed()) g.close(); };
     const look = (_ev, u) => {
@@ -253,7 +300,7 @@ ipcMain.handle('cloud:google', async (_e, { url, via } = {}) => {
   if (!result.ok) return result;
   const me = await cloudFetch('GET', '/api/me', null, result.token);
   if (!me.ok) return me;
-  writeSecrets({ cloudToken: result.token, cloudEmail: me.data.user.email, cloudName: me.data.user.name || '' });
+  try { writeSecrets({ cloudToken: result.token, cloudEmail: me.data.user.email, cloudName: me.data.user.name || '' }); } catch (err) { return { ok: false, error: err.message }; }
   return { ok: true, user: me.data.user };
 });
 ipcMain.handle('cloud:logout', async () => {
@@ -342,13 +389,27 @@ function setupPortableUpdater() {
   let downloading = false;
   let ready = null; // {version, file}
 
+  // טביעת האצבע (SHA-256) של הקובץ שירד מול זו ש-GitHub מפרסם לקובץ. בלי טביעה מ-GitHub
+  // (גרסאות ישנות) נשארת רק בדיקת הגודל.
+  async function sameAsPublished(file, asset) {
+    const m = /^sha256:([0-9a-f]{64})$/i.exec(String(asset.digest || ''));
+    if (!m) { logUpdate('no digest for ' + asset.name + ' - size check only'); return true; }
+    const hash = await new Promise((resolve, reject) => {
+      const h = require('crypto').createHash('sha256');
+      fs.createReadStream(file).on('data', (d) => h.update(d)).on('error', reject).on('end', () => resolve(h.digest('hex')));
+    });
+    if (hash.toLowerCase() !== m[1].toLowerCase()) { logUpdate('digest mismatch for ' + file); return false; }
+    return true;
+  }
+
   async function download(asset, version) {
     // שם בלי סיומת exe עד ההחלפה, כדי שאנטי-וירוס לא ינעל את הקובץ באמצע; ואם אי אפשר לכתוב ליד
     // התוכנה (למשל תיקייה מוגנת) - לתיקייה הזמנית של המשתמש.
     let dir = PORTABLE_DIR;
     try { fs.accessSync(dir, fs.constants.W_OK); } catch (_) { dir = app.getPath('temp'); }
     const target = path.join(dir, '.camp-manager-update-' + version + '.bin');
-    if (fs.existsSync(target) && fs.statSync(target).size === asset.size) return target;
+    // קובץ שכבר ירד (למשל החלפה שנכשלה בפעם הקודמת) - רק אם הוא בדיוק הקובץ שפורסם.
+    if (fs.existsSync(target) && fs.statSync(target).size === asset.size && (await sameAsPublished(target, asset))) return target;
     const tmp = target + '.part';
     try { fs.unlinkSync(tmp); } catch (_) { /* אין קובץ ישן */ }
     // מנהל ההורדות של הדפדפן (כמו בכרום): עוקב אחרי הפניות, ממשיך אחרי ניתוק קצר, ומדווח התקדמות
@@ -397,6 +458,7 @@ function setupPortableUpdater() {
     // קובץ חסר (חיבור שנקטע) לא מחליף את התוכנה.
     const got = fs.statSync(tmp).size;
     if (got !== asset.size) { fs.unlinkSync(tmp); throw new Error(`ההורדה לא הושלמה (${got} מתוך ${asset.size} בתים)`); }
+    if (!(await sameAsPublished(tmp, asset))) { fs.unlinkSync(tmp); throw new Error('הקובץ שירד שונה מהקובץ שפורסם - לא מתקינים אותו'); }
     for (let i = 0; ; i++) {
       try { fs.renameSync(tmp, target); break; } catch (e) {
         if (i >= 10) throw e;
@@ -416,7 +478,8 @@ function setupPortableUpdater() {
       if (!res.ok) throw new Error('GitHub החזיר ' + res.status);
       const rel = await res.json();
       const latest = String(rel.tag_name || '').replace(/^v/, '');
-      if (!latest || !newerVersion(latest, app.getVersion())) { send('none', { version: app.getVersion() }); return updateStatus; }
+      if (!/^\d+\.\d+\.\d+$/.test(latest)) throw new Error('מספר גרסה לא תקין מ-GitHub');
+      if (!newerVersion(latest, app.getVersion())) { send('none', { version: app.getVersion() }); return updateStatus; }
       const asset = (rel.assets || []).find((a) => /portable.*\.exe$/i.test(a.name));
       if (!asset) { send('portable', { version: latest }); return updateStatus; }
       send('available', { version: latest });
@@ -457,7 +520,8 @@ function setupPortableUpdater() {
   }
 
   // קובץ עדכון שנשאר ליד התוכנה: אם הוא ישן או זהה לגרסה הנוכחית - ההחלפה הצליחה, מוחקים אותו.
-  // אם הוא חדש יותר - ההחלפה בפעם הקודמת נכשלה, ומנסים שוב בסגירה הבאה.
+  // אם הוא חדש יותר - ההחלפה בפעם הקודמת נכשלה. סומכים עליו רק אחרי שהבדיקה מול GitHub (עוד כמה
+  // שניות) מאשרת שהוא בדיוק הקובץ שפורסם - לא סתם כי הוא נמצא בתיקייה.
   for (const dir of [PORTABLE_DIR, app.getPath('temp')]) {
     let names = [];
     try { names = fs.readdirSync(dir); } catch (_) { continue; }
@@ -465,9 +529,8 @@ function setupPortableUpdater() {
       const m = /^\.camp-manager-update-(\d+\.\d+\.\d+)\.(bin|exe)(\.part)?$/.exec(name);
       if (!m) continue;
       const file = path.join(dir, name);
-      if (!m[3] && newerVersion(m[1], app.getVersion())) {
-        ready = { version: m[1], file };
-        setTimeout(() => sendUpdate('ready', { version: m[1], retry: true }), 3000);
+      if (!m[3] && m[2] === 'bin' && newerVersion(m[1], app.getVersion())) {
+        logUpdate('pending update file found: ' + file);
       } else {
         try { fs.unlinkSync(file); } catch (_) { /* ננסה בפעם הבאה */ }
       }

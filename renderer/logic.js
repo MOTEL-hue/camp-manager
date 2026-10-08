@@ -379,11 +379,18 @@
       delete db.columns;
       delete db.settings.hiddenFields;
     }
+    // נתונים פגומים (קובץ ישן, או פרויקט משותף שהגיע פגום) לא מקריסים את התוכנה - מתקנים.
+    db.projects = db.projects.filter((pr) => pr && typeof pr === 'object' && !Array.isArray(pr));
     for (const pr of db.projects) {
       const np = newProject(pr.name, pr.kind);
-      for (const k of Object.keys(np)) if (pr[k] === undefined) pr[k] = np[k];
-      pr.pricing = Object.assign({ mode: 'none', flat: 0, groups: {} }, pr.pricing);
-      for (const p of pr.people) p.custom = p.custom || {};
+      for (const k of Object.keys(np)) {
+        if (pr[k] === undefined || pr[k] === null || (Array.isArray(np[k]) && !Array.isArray(pr[k]))) pr[k] = np[k];
+      }
+      if (typeof pr.enrollments !== 'object' || Array.isArray(pr.enrollments)) pr.enrollments = {};
+      for (const k of Object.keys(np)) if (Array.isArray(np[k])) pr[k] = pr[k].filter((e) => typeof e !== 'object' || (e && !Array.isArray(e)));
+      pr.pricing = Object.assign({ mode: 'none', flat: 0, groups: {} }, typeof pr.pricing === 'object' && !Array.isArray(pr.pricing) ? pr.pricing : {});
+      pr.people = pr.people.filter((p) => p && typeof p === 'object');
+      for (const p of pr.people) p.custom = p.custom && typeof p.custom === 'object' ? p.custom : {};
     }
     return db;
   }

@@ -37,10 +37,7 @@
 
     // חותמת קצרה לתוכן, כדי לדעת אם יש בכלל מה לשלוח.
     sig(pr) {
-      const str = JSON.stringify(Sync.forUpload(pr));
-      let h = 5381;
-      for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
-      return str.length + ':' + (h >>> 0).toString(36);
+      return djb2(JSON.stringify(Sync.forUpload(pr)));
     },
 
     // סנכרון: בקשה קלה אחת לרשימה (מספרי גרסה). פרויקט יורד רק אם השתנה באתר, ועולה רק אם השתנה
@@ -60,7 +57,8 @@
           if (Store.db.projects.some((p) => p.id === rp.id)) continue;
           const r = await window.api.cloud('GET', '/api/projects/' + rp.id);
           if (!r.ok) continue;
-          const pr = r.data.data;
+          const pr = Sync.sanitize(r.data.data, rp.id);
+          if (!pr) { toast(`הפרויקט "${rp.name}" הגיע מהאתר פגום - לא נוסף`); continue; }
           pr.cloud = { sync: true, rev: r.data.rev, role: rp.role, owner: rp.owner_name || rp.owner_email, synced: true };
           pr.cloud.sig = this.sig(pr);
           Store.replaceProject(pr);
@@ -86,7 +84,8 @@
           if (remoteChanged) {
             const g = await window.api.cloud('GET', '/api/projects/' + pr.id);
             if (!g.ok) throw g;
-            base = g.data.data;
+            base = Sync.sanitize(g.data.data, pr.id);
+            if (!base) throw { error: `הפרויקט "${pr.name}" באתר פגום` };
             baseRev = g.data.rev;
           }
           for (let attempt = 0; attempt < 4; attempt++) {
@@ -94,27 +93,35 @@
             const merged = base ? Sync.merge(current, base) : JSON.parse(JSON.stringify(current));
             const role = (rp && rp.role) || current.cloud.role || 'owner';
             let rev = baseRev;
-            const needUpload = !base || JSON.stringify(Sync.forUpload(merged)) !== JSON.stringify(Sync.forUpload(base));
+            // היתרות לשלוחת הטלפון: האתר מקבל אותן רק מהיוצר או ממי שעורך הכול. כשמשהו השתנה אצל
+            // שותף (למשל נוסף תשלום), המחשב של היוצר מחשב ושולח יתרות מעודכנות גם בלי שינוי משלו.
+            Logic.setProjects(Store.db.projects);
+            const balances = Logic.phoneBalances(merged);
+            const balSig = djb2(JSON.stringify(balances));
+            const balancesStale = (role === 'owner' || Sync.rights(role).editAll) && balSig !== current.cloud.balSig;
+            const needUpload = !base || balancesStale || JSON.stringify(Sync.forUpload(merged)) !== JSON.stringify(Sync.forUpload(base));
             if (needUpload) {
-              Logic.setProjects(Store.db.projects);
-              const res = await window.api.cloud('POST', '/api/projects/' + pr.id, { data: Sync.forUpload(merged), baseRev, balances: Logic.phoneBalances(merged) });
+              const res = await window.api.cloud('POST', '/api/projects/' + pr.id, { data: Sync.forUpload(merged), baseRev, balances });
               if (!res.ok && res.status === 409) {
                 const g = await window.api.cloud('GET', '/api/projects/' + pr.id);
                 if (!g.ok) throw g;
-                base = g.data.data;
+                base = Sync.sanitize(g.data.data, pr.id);
+                if (!base) throw { error: `הפרויקט "${pr.name}" באתר פגום` };
                 baseRev = g.data.rev;
                 continue;
               }
               if (!res.ok) throw res;
               rev = res.data.rev;
-              if (res.data.data) {
+              const kept = res.data.data && Sync.sanitize(res.data.data, pr.id);
+              if (kept) {
                 // האתר החזיר חלק מהשינויים (אין הרשאה) - מתיישרים למה שנשמר שם בפועל.
                 Object.keys(merged).forEach((k) => { delete merged[k]; });
-                Object.assign(merged, res.data.data);
+                Object.assign(merged, kept);
                 toast(`בפרויקט "${merged.name}" חלק מהשינויים לא נשמרו - אין לך הרשאה אליהם`);
               }
             }
             merged.cloud = Object.assign({}, current.cloud, { synced: true, rev, role });
+            if (needUpload) merged.cloud.balSig = balSig;
             merged.cloud.sig = this.sig(merged);
             const before = JSON.stringify(Sync.forUpload(current));
             Store.replaceProject(merged);
@@ -133,6 +140,12 @@
       if (this.again) { this.again = false; this.syncAll(); }
     },
   };
+
+  function djb2(str) {
+    let h = 5381;
+    for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+    return str.length + ':' + (h >>> 0).toString(36);
+  }
 
   // לא מציירים מחדש באמצע הקלדה בשדה - מחכים שהשדה ייעזב.
   let pendingRender = false;
@@ -267,7 +280,7 @@
       }
       const roles = r.data.invite_roles || {};
       if (r.data.invites.length) list.appendChild(el('div', null, 'ממתינים לפתיחת חשבון: ' + r.data.invites.map((e) => e + ' (' + Sync.rights(roles[e]).label + ')').join(', ')));
-      list.appendChild(el('p', { class: 'muted small' }, '"מה שהוסיף/ה" = רק פריטים שהשותף/ה עצמו/ה הוסיפו - לא שלך. סימון רישום נחשב הוספה. ההרשאות נאכפות גם באתר.'));
+      list.appendChild(el('p', { class: 'muted small' }, '"מה שהוסיף/ה" = רק פריטים שהשותף/ה עצמו/ה הוסיפו - לא שלך (גם ברישום: לרשום אדם חדש מותר, לשנות רישום של אחר - רק בעריכה). ההרשאות נאכפות גם באתר.'));
     }
     loadMembers();
   };

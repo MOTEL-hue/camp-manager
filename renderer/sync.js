@@ -28,8 +28,8 @@
     return JSON.stringify(m);
   }
 
-  // הרשאות בשיתוף. "שלו" = פריט שהוא הוסיף (_by = מזהה החשבון שלו). פריטים בלי _by שייכים ליוצר הפרויקט.
-  // רישום (enrollments) נחשב הוספת נתונים: מי שמותר לו להוסיף יכול גם לסמן רישום.
+  // הרשאות בשיתוף (כמו camps/permissions.py באתר). "שלו" = פריט שהוא הוסיף (_by = מזהה החשבון שלו).
+  // פריטים בלי _by שייכים ליוצר הפרויקט. רישום נבדק כמו כל פריט: רישום חדש = הוספה, שינוי רישום של אחר = עריכה.
   const ROLES = {
     editor: { label: 'עריכה מלאה', add: true, editAll: true, editOwn: true, delAll: true, delOwn: true, meta: true },
     nodelete: { label: 'הוספה ועריכה, בלי מחיקה', add: true, editAll: true, editOwn: true, delAll: false, delOwn: false, meta: true },
@@ -58,7 +58,11 @@
     }
     const be = prev.enrollments || {};
     const ce = cur.enrollments || {};
-    for (const [id, e] of Object.entries(ce)) if ((!be[id] || bare(be[id]) !== bare(e)) && !r.add) out.push({ k: 'enrollments', id, what: be[id] ? 'edit' : 'add' });
+    for (const [id, e] of Object.entries(ce)) {
+      const b = be[id];
+      if (!b) { if (!r.add) out.push({ k: 'enrollments', id, what: 'add' }); }
+      else if (bare(b) !== bare(e) && !(r.editAll || (r.editOwn && mine(b)))) out.push({ k: 'enrollments', id, what: 'edit' });
+    }
     for (const [id, b] of Object.entries(be)) if (!ce[id] && !(r.delAll || (r.delOwn && mine(b)))) out.push({ k: 'enrollments', id, what: 'delete' });
     if (metaOf(prev) !== metaOf(cur) && !r.meta) out.push({ k: 'meta', what: 'meta' });
     return out;
@@ -133,6 +137,40 @@
     return JSON.parse(JSON.stringify(out));
   }
 
+  // פרויקט שהגיע מהאתר (ממחשב של מישהו אחר) - מנקים לפני שהוא נכנס לתוכנה: רשימות הן רשימות של
+  // אובייקטים עם id, וכו'. נתונים פגומים אחרת היו מקריסים את התוכנה בכל פתיחה.
+  const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+  const BAD_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+  function plain(o) {
+    const c = {};
+    for (const [k, v] of Object.entries(o)) if (!BAD_KEYS.has(k)) c[k] = v;
+    return c;
+  }
+  function sanitize(p, expectedId) {
+    if (!isObj(p)) return null;
+    const out = plain(p);
+    out.id = typeof p.id === 'string' ? p.id : String(expectedId || '');
+    if (expectedId && out.id !== expectedId) return null;
+    if (typeof out.name !== 'string') out.name = String(out.name == null ? '' : out.name);
+    for (const k of ARRAYS) {
+      const seen = new Set();
+      out[k] = (Array.isArray(p[k]) ? p[k] : []).filter((e) => {
+        if (!isObj(e) || (typeof e.id !== 'string' && typeof e.id !== 'number') || seen.has(e.id)) return false;
+        seen.add(e.id);
+        return true;
+      }).map(plain);
+    }
+    for (const e of out.people) if (!isObj(e.custom)) e.custom = {};
+    out.enrollments = {};
+    if (isObj(p.enrollments)) for (const [id, e] of Object.entries(p.enrollments)) if (isObj(e) && !BAD_KEYS.has(id)) out.enrollments[id] = plain(e);
+    out.tombstones = {};
+    if (isObj(p.tombstones)) for (const [k, t] of Object.entries(p.tombstones)) if (typeof t === 'number' && !BAD_KEYS.has(k)) out.tombstones[k] = t;
+    for (const k of ['pricing', 'settings']) if (k in out && !isObj(out[k])) delete out[k];
+    for (const k of ['hiddenFields']) if (k in out && !Array.isArray(out[k])) delete out[k];
+    delete out.cloud;
+    return out;
+  }
+
   // לשליחה לשרת: בלי השדות המקומיים.
   function forUpload(p) {
     const c = JSON.parse(JSON.stringify(p));
@@ -140,5 +178,5 @@
     return c;
   }
 
-  return { ARRAYS, ROLES, rights, violations, stamp, merge, forUpload };
+  return { ARRAYS, ROLES, rights, violations, stamp, merge, forUpload, sanitize };
 });

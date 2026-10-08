@@ -126,3 +126,28 @@ test('הרשאות שיתוף: מה מותר לכל תפקיד', () => {
   assert.deepStrictEqual(S.violations(mine, reg, 'add', 7), []);
   assert.strictEqual(S.violations(mine, reg, 'viewer', 7).length, 1);
 });
+
+test('פרויקט פגום שהגיע מהאתר מנוקה ולא מקריס את התוכנה', () => {
+  const bad = { id: 'x', name: 5, people: null, payments: [null, 'a', { id: 'p1', amount: 5 }, { id: 'p1' }], enrollments: [], tombstones: { 'people:a': 'zz', 'people:b': 3 }, pricing: 'free', __proto__: { evil: 1 } };
+  const clean = S.sanitize(JSON.parse(JSON.stringify(bad)), 'x');
+  assert.deepStrictEqual(clean.people, []);
+  assert.deepStrictEqual(clean.payments.map((p) => p.id), ['p1']);
+  assert.deepStrictEqual(clean.enrollments, {});
+  assert.deepStrictEqual(clean.tombstones, { 'people:b': 3 });
+  assert.strictEqual(clean.pricing, undefined);
+  assert.strictEqual(S.sanitize(bad, 'other'), null);
+  assert.strictEqual(S.sanitize([], 'x'), null);
+  // וגם קובץ נתונים פגום נפתח
+  const db = L.migrate({ settings: {}, projects: [null, { id: 'y', name: 'ק', people: null, payments: 'x', enrollments: [] }] });
+  assert.strictEqual(db.projects.length, 1);
+  assert.deepStrictEqual(db.projects[0].people, []);
+  assert.deepStrictEqual(db.projects[0].payments, []);
+});
+
+test('רישום של אדם של אחר = עריכה; רישום חדש = הוספה', () => {
+  const p = base();
+  const prev = clone(p);
+  p.enrollments.a.discount = 50;
+  assert.strictEqual(S.violations(prev, p, 'add', 7)[0].what, 'edit');
+  assert.deepStrictEqual(S.violations(prev, p, 'nodelete', 7), []);
+});

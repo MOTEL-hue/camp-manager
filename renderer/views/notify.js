@@ -182,7 +182,8 @@
         el('button', { class: 'btn primary', onclick: async () => {
           const v = { gmailUser: gUser.value };
           if (gPass.value) v.gmailPass = gPass.value;
-          await window.api.setSecrets(v);
+          const saved = await window.api.setSecrets(v);
+          if (saved && saved.ok === false) { toast(saved.error); return; }
           toast('נשמר. שולח מייל בדיקה...');
           const r = await window.api.sendMail({ to: gUser.value, subject: 'בדיקה מתוכנת ניהול הקייטנות', text: 'אם הגיע אליך המייל הזה - הכול מוגדר נכון ✓' });
           toast(r.ok ? 'מייל בדיקה נשלח ל-' + gUser.value + ' ✓' : 'הבדיקה נכשלה: ' + r.error);
@@ -199,7 +200,8 @@
         el('button', { class: 'btn primary', onclick: async () => {
           const v = { yemotLine: yLine.value };
           if (yPass.value) v.yemotPass = yPass.value;
-          await window.api.setSecrets(v);
+          const saved = await window.api.setSecrets(v);
+          if (saved && saved.ok === false) { toast(saved.error); return; }
           const r = await window.api.yemot('GetSession', {});
           toast(r.ok ? 'החיבור לקו תקין ✓' + (r.data && r.data.units !== undefined ? ' · יחידות: ' + r.data.units : '') : 'הבדיקה נכשלה: ' + r.error);
           App.render();
