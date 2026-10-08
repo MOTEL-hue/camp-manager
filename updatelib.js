@@ -46,6 +46,12 @@ function parseManifest(m) {
   return { version: m.version, electron: String(m.electron), asar: { name: a.name, sha256: a.sha256.toLowerCase(), size: a.size } };
 }
 
+// כתובת ההורדה של ה-zip המלא (להורדה ידנית בדפדפן), אם קיים בגרסה.
+function fastZipUrl(assets, version) {
+  const zip = (assets || []).find((a) => a.name === fastZipName(version));
+  return zip ? zip.browser_download_url : null;
+}
+
 // מה לעשות: 'none' (אין חדש), 'asar' (מורידים רק את הקוד), או 'full' (צריך להוריד את כל התוכנה מחדש,
 // כי רכיב הדפדפן השתנה או שחסר קובץ הקוד).
 function planFolderUpdate({ latest, current, electron, manifest, assets }) {
@@ -81,4 +87,4 @@ function gunzipVerify(gzFile, outFile, { sha256, size }) {
   });
 }
 
-module.exports = { MANIFEST_NAME, VERSION_RE, asarAssetName, fastZipName, newerVersion, sha256File, makeManifest, parseManifest, planFolderUpdate, gunzipVerify };
+module.exports = { MANIFEST_NAME, VERSION_RE, asarAssetName, fastZipName, newerVersion, fastZipUrl, sha256File, makeManifest, parseManifest, planFolderUpdate, gunzipVerify };

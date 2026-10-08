@@ -57,7 +57,7 @@
       case 'available': return 'נמצאה גרסה ' + s.version + ', מתחיל להוריד...';
       case 'downloading':
         // ברשת מסוננת (כמו נטפרי) הקובץ נבדק לפני שהוא מגיע, וההתקדמות נשארת על 0 כמה דקות.
-        if (!s.received) return 'מתחיל להוריד גרסה חדשה... (ברשת מסוננת הקובץ נבדק קודם, וזה יכול לקחת כמה דקות. אפשר להמשיך לעבוד)';
+        if (!s.received) return 'ממתין לתחילת ההורדה' + (s.waiting ? ' (' + s.waiting + ' שניות)' : '') + '... ברשת מסוננת הקובץ נבדק קודם, וזה יכול לקחת כמה דקות. אפשר להמשיך לעבוד.';
         return 'מוריד גרסה חדשה... ' + (s.percent || 0) + '% (' + mb(s.received) + ' מתוך ' + mb(s.total) + ' MB)';
       case 'ready': return 'גרסה ' + s.version + ' מוכנה. היא תותקן לבד כשתסגור את התוכנה.';
       case 'applying': return 'מחליף לגרסה החדשה...';
@@ -81,6 +81,7 @@
     b.appendChild(el('span', null, title + updateText(s)));
     if (s.state === 'downloading') b.appendChild(el('div', { class: 'bar' }, el('div', { style: { width: (s.percent || 0) + '%' } })));
     b.appendChild(el('div', { class: 'grow' }));
+    if (s.state === 'downloading' && !s.received && s.waiting >= 20 && s.manualUrl) b.appendChild(el('button', { class: 'btn small', onclick: () => window.open(s.manualUrl) }, 'להורדה בדפדפן'));
     if (s.state === 'ready') b.appendChild(el('button', { class: 'btn small primary', onclick: installNow }, 'עדכן עכשיו'));
     if (s.state === 'portable' || s.state === 'error') b.appendChild(el('button', { class: 'btn small primary', onclick: () => window.open(s.url) }, 'להורדה ידנית'));
     b.appendChild(el('button', { class: 'btn small', title: 'הסתר', onclick: () => { bannerClosed = s.state + s.version; renderBanner(s); } }, '✕'));

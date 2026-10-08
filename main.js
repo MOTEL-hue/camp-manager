@@ -382,6 +382,7 @@ const { newerVersion } = updatelib;
 
 // ---------- הורדה ובדיקה של קובצי עדכון (משותף לשתי הגרסאות הניידות) ----------
 const STALL_MS = 15 * 60 * 1000;
+const FIRST_BYTE_MS = 25 * 1000;
 
 // טביעת האצבע (SHA-256) של הקובץ שירד מול זו ש-GitHub מפרסם לקובץ. בלי טביעה מ-GitHub
 // (גרסאות ישנות) נשארת רק בדיקת הגודל.
@@ -439,11 +440,81 @@ function chromiumDownload(url, tmp, expectedSize) {
   });
 }
 
+// הורדה בזרם ישיר דרך מנוע הרשת של Electron (כמו electron-updater וכמו תוכנות אחרות): ההתקדמות נראית
+// בזמן אמת, בלי מנהל ההורדות של הדפדפן. נכשל (ואז עוברים לשיטה הקודמת) אם לא מתחיל להגיע מידע, אם
+// מגיע יותר מדי מידע (הקובץ גדול ממה שפורסם), או בכל שגיאת רשת.
+function streamDownload(url, tmp, expectedSize, extra) {
+  return new Promise((resolve, reject) => {
+    const req = net.request({ url, redirect: 'follow' });
+    req.setHeader('User-Agent', 'camp-manager-updater');
+    req.setHeader('Accept', 'application/octet-stream');
+    let out = null;
+    let got = 0;
+    let started = false;
+    let finished = false;
+    let lastActivity = Date.now();
+    let lastSend = 0;
+    const t0 = Date.now();
+    const fail = (err) => {
+      if (finished) return;
+      finished = true;
+      clearInterval(timer);
+      try { req.abort(); } catch (_) { /* כבר נסגר */ }
+      if (out) out.destroy();
+      reject(err);
+    };
+    const timer = setInterval(() => {
+      const idle = Date.now() - lastActivity;
+      if (!started && idle > FIRST_BYTE_MS) fail(new Error('לא התחיל להגיע מידע תוך ' + Math.round(FIRST_BYTE_MS / 1000) + ' שניות'));
+      else if (idle > STALL_MS) fail(new Error('ההורדה נתקעה ולא התקדמה רבע שעה'));
+      else if (!started) sendUpdate('downloading', Object.assign({ percent: 0, received: 0, total: expectedSize, waiting: Math.round((Date.now() - t0) / 1000) }, extra));
+    }, 1000);
+    req.on('error', fail);
+    req.on('response', (res) => {
+      if (res.statusCode !== 200) return fail(new Error('השרת החזיר ' + res.statusCode));
+      const len = Number([].concat(res.headers['content-length'] || [])[0]);
+      if (len && expectedSize && len !== expectedSize) return fail(new Error('גודל הקובץ בשרת שונה ממה שפורסם'));
+      out = fs.createWriteStream(tmp);
+      out.on('error', fail);
+      res.on('error', fail);
+      res.on('data', (chunk) => {
+        started = true;
+        lastActivity = Date.now();
+        got += chunk.length;
+        if (expectedSize && got > expectedSize) return fail(new Error('הגיע יותר מידע מגודל הקובץ שפורסם'));
+        if (!out.write(chunk)) { res.pause(); out.once('drain', () => res.resume()); }
+        if (Date.now() - lastSend > 250) {
+          lastSend = Date.now();
+          sendUpdate('downloading', Object.assign({ percent: Math.min(100, Math.floor((got / (expectedSize || got)) * 100)), received: got, total: expectedSize || got }, extra));
+        }
+      });
+      res.on('end', () => {
+        if (finished) return;
+        out.end(() => {
+          if (finished) return;
+          finished = true;
+          clearInterval(timer);
+          sendUpdate('downloading', Object.assign({ percent: 100, received: got, total: expectedSize || got }, extra));
+          resolve();
+        });
+      });
+    });
+    req.end();
+  });
+}
+
 // מוריד קובץ ל-target, בודק שהוא שלם ושהוא בדיוק הקובץ שפורסם, ורק אז נותן לו את השם הסופי.
-async function downloadVerified(asset, target) {
+// קודם בזרם ישיר; אם נכשל - דרך מנהל ההורדות של הדפדפן (שיטה שעבדה גם ברשת מסוננת, לאט).
+async function downloadVerified(asset, target, extra) {
   const tmp = target + '.part';
   try { fs.unlinkSync(tmp); } catch (_) { /* אין קובץ ישן */ }
-  await chromiumDownload(asset.browser_download_url, tmp, asset.size);
+  try {
+    await streamDownload(asset.browser_download_url, tmp, asset.size, extra);
+  } catch (err) {
+    logUpdate('stream download failed (' + errText(err) + ') - falling back to the browser download manager');
+    try { fs.unlinkSync(tmp); } catch (_) { /* לא נוצר */ }
+    await chromiumDownload(asset.browser_download_url, tmp, asset.size);
+  }
   // קובץ חסר (חיבור שנקטע) לא מחליף את התוכנה.
   const got = fs.statSync(tmp).size;
   if (got !== asset.size) { fs.unlinkSync(tmp); throw new Error(`ההורדה לא הושלמה (${got} מתוך ${asset.size} בתים)`); }
@@ -500,7 +571,7 @@ function setupFolderUpdater() {
       const dir = stagingDir();
       const file = path.join(dir, '.camp-manager-update-' + latest + '.bin'); // לא .asar: Electron מתייחס לשם כזה כאל ארכיון
       if (!(await fileMatches(file, manifest.asar))) {
-        const gz = await downloadVerified(plan.asset, path.join(dir, '.camp-manager-update-' + latest + '.gz'));
+        const gz = await downloadVerified(plan.asset, path.join(dir, '.camp-manager-update-' + latest + '.gz'), { manualUrl: updatelib.fastZipUrl(rel.assets, latest) });
         try {
           await updatelib.gunzipVerify(gz, file + '.part', manifest.asar);
           fs.renameSync(file + '.part', file);
@@ -577,7 +648,7 @@ function setupPortableUpdater() {
     const target = path.join(dir, '.camp-manager-update-' + version + '.bin');
     // קובץ שכבר ירד (למשל החלפה שנכשלה בפעם הקודמת) - רק אם הוא בדיוק הקובץ שפורסם.
     if (fs.existsSync(target) && fs.statSync(target).size === asset.size && (await sameAsPublished(target, asset))) return target;
-    return downloadVerified(asset, target);
+    return downloadVerified(asset, target, { manualUrl: asset.browser_download_url });
   }
 
   const check = async () => {
