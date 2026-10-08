@@ -107,6 +107,12 @@
               }
               if (!res.ok) throw res;
               rev = res.data.rev;
+              if (res.data.data) {
+                // האתר החזיר חלק מהשינויים (אין הרשאה) - מתיישרים למה שנשמר שם בפועל.
+                Object.keys(merged).forEach((k) => { delete merged[k]; });
+                Object.assign(merged, res.data.data);
+                toast(`בפרויקט "${merged.name}" חלק מהשינויים לא נשמרו - אין לך הרשאה אליהם`);
+              }
             }
             merged.cloud = Object.assign({}, current.cloud, { synced: true, rev, role });
             merged.cloud.sig = this.sig(merged);
@@ -224,15 +230,22 @@
     if (!synced) return;
     if (pr.cloud.role && pr.cloud.role !== 'owner') {
       card.appendChild(el('p', { class: 'muted' }, 'הפרויקט שותף איתך' + (pr.cloud.owner ? ' על ידי ' + pr.cloud.owner : '') + '. שינויים שלך ושלהם מתעדכנים אצל כולם.'));
+      card.appendChild(el('p', null, 'ההרשאה שלך: ', el('strong', null, Sync.rights(pr.cloud.role).label)));
       return;
     }
+    const roleSelect = (value) => {
+      const s = el('select', null, Object.entries(Sync.ROLES).map(([k, r]) => el('option', { value: k }, r.label)));
+      s.value = value || 'editor';
+      return s;
+    };
     const list = el('div', { class: 'muted small' }, 'טוען שותפים...');
     const email = el('input', { type: 'email', dir: 'ltr', placeholder: 'מייל של מי שאיתו משתפים' });
+    const role = roleSelect('editor');
     card.appendChild(list);
-    card.appendChild(el('div', { class: 'toolbar', style: { marginTop: '8px' } }, email,
+    card.appendChild(el('div', { class: 'toolbar', style: { marginTop: '8px' } }, email, role,
       el('button', { class: 'btn primary', onclick: async () => {
         await Cloud.syncAll();
-        const r = await window.api.cloud('POST', '/api/projects/' + pr.id + '/invite', { email: email.value });
+        const r = await window.api.cloud('POST', '/api/projects/' + pr.id + '/invite', { email: email.value, role: role.value });
         if (!r.ok) { toast(r.error); return; }
         toast(r.data.joined ? 'השותף/ה נוסף/ה ✓ - הפרויקט יופיע אצלו/ה בסנכרון הבא' : 'נשלחה הזמנה: הפרויקט יופיע אצלו/ה ברגע שייפתח חשבון עם המייל הזה');
         email.value = '';
@@ -242,9 +255,19 @@
       const r = await window.api.cloud('GET', '/api/projects/' + pr.id + '/members');
       clear(list);
       if (!r.ok) { list.textContent = r.offline ? 'אין חיבור לאתר' : 'עוד לא סונכרן'; return; }
-      list.appendChild(el('div', null, 'שותפים: ', r.data.members.map((m, i) => [i ? ', ' : '', (m.name || m.email) + (m.role === 'owner' ? ' (את/ה)' : ''),
-        m.role !== 'owner' ? el('button', { class: 'btn small ghost danger', onclick: async () => { await window.api.cloud('DELETE', '/api/projects/' + pr.id + '/members/' + m.id); loadMembers(); } }, '✕') : null])));
-      if (r.data.invites.length) list.appendChild(el('div', null, 'ממתינים לפתיחת חשבון: ' + r.data.invites.join(', ')));
+      for (const m of r.data.members) {
+        if (m.role === 'owner') { list.appendChild(el('div', null, (m.name || m.email) + ' (את/ה)')); continue; }
+        const s = roleSelect(m.role);
+        s.onchange = async () => {
+          const res = await window.api.cloud('POST', '/api/projects/' + pr.id + '/members/' + m.id, { role: s.value });
+          toast(res.ok ? 'ההרשאה עודכנה ✓' : res.error);
+        };
+        list.appendChild(el('div', { class: 'toolbar' }, el('span', null, m.name || m.email), s,
+          el('button', { class: 'btn small ghost danger', title: 'הסרה מהשיתוף', onclick: async () => { await window.api.cloud('DELETE', '/api/projects/' + pr.id + '/members/' + m.id); loadMembers(); } }, '✕')));
+      }
+      const roles = r.data.invite_roles || {};
+      if (r.data.invites.length) list.appendChild(el('div', null, 'ממתינים לפתיחת חשבון: ' + r.data.invites.map((e) => e + ' (' + Sync.rights(roles[e]).label + ')').join(', ')));
+      list.appendChild(el('p', { class: 'muted small' }, '"מה שהוסיף/ה" = רק פריטים שהשותף/ה עצמו/ה הוסיפו - לא שלך. סימון רישום נחשב הוספה. ההרשאות נאכפות גם באתר.'));
     }
     loadMembers();
   };

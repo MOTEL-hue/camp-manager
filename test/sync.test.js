@@ -82,3 +82,47 @@ test('שדות מקומיים (cloud) לא נשלחים לשרת', () => {
   assert.strictEqual(S.forUpload(p).cloud, undefined);
   assert.ok(p.cloud);
 });
+
+test('הרשאות שיתוף: מה מותר לכל תפקיד', () => {
+  const owner = base();
+  // שותף (חשבון 7) מוסיף תשלום - הפריט נרשם על שמו
+  const mine = clone(owner);
+  const prev = clone(mine);
+  mine.payments.push({ id: 'p7', personId: 'a', amount: 50 });
+  S.stamp(prev, mine, 300, 7);
+  assert.strictEqual(mine.payments[0]._by, 7);
+  for (const role of ['editor', 'nodelete', 'own', 'add']) assert.deepStrictEqual(S.violations(prev, mine, role, 7), [], role);
+  assert.strictEqual(S.violations(prev, mine, 'viewer', 7)[0].what, 'add');
+
+  // מחיקת אדם של היוצר: רק עריכה מלאה
+  const delOther = clone(mine);
+  delOther.people = delOther.people.filter((p) => p.id !== 'b');
+  assert.deepStrictEqual(S.violations(mine, delOther, 'editor', 7), []);
+  for (const role of ['nodelete', 'own', 'add']) assert.strictEqual(S.violations(mine, delOther, role, 7)[0].what, 'delete', role);
+
+  // מחיקת התשלום שהוא עצמו הוסיף: מותר ב"own", אסור ב"add" וב"nodelete"
+  const delMine = clone(mine);
+  delMine.payments = [];
+  assert.deepStrictEqual(S.violations(mine, delMine, 'own', 7), []);
+  assert.strictEqual(S.violations(mine, delMine, 'add', 7).length, 1);
+  assert.strictEqual(S.violations(mine, delMine, 'nodelete', 7).length, 1);
+  assert.strictEqual(S.violations(mine, delMine, 'own', 8).length, 1); // לא שלו
+
+  // שינוי שם של אדם של היוצר: מותר ב-nodelete, אסור ב-own/add
+  const rename = clone(mine);
+  rename.people[0].firstName = 'רחלי';
+  assert.deepStrictEqual(S.violations(mine, rename, 'nodelete', 7), []);
+  assert.strictEqual(S.violations(mine, rename, 'own', 7)[0].what, 'edit');
+
+  // הגדרות הפרויקט (מחיר)
+  const price = clone(mine);
+  price.pricing.flat = 200;
+  assert.strictEqual(S.violations(mine, price, 'own', 7)[0].what, 'meta');
+  assert.deepStrictEqual(S.violations(mine, price, 'nodelete', 7), []);
+
+  // סימון רישום = הוספת נתונים
+  const reg = clone(mine);
+  L.ensureEnrollment(reg, 'b').registered = true;
+  assert.deepStrictEqual(S.violations(mine, reg, 'add', 7), []);
+  assert.strictEqual(S.violations(mine, reg, 'viewer', 7).length, 1);
+});

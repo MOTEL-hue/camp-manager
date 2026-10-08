@@ -149,11 +149,30 @@
       if (!data) await window.api.saveDb(this.db);
     },
     // פרויקטים שמסונכרנים לאתר: כל פריט שהשתנה מקבל חותמת זמן, כדי שהמיזוג ידע מה חדש יותר.
+    // בפרויקט ששותף איתך: שינוי שההרשאה שלך לא מתירה (למשל מחיקה) מבוטל מיד, עם הסבר.
+    // (גם האתר בודק את זה - כאן זה כדי שלא ייראה כאילו השינוי נשמר.)
     stampSynced(prevDb) {
       if (!this.db.projects.some((p) => p.cloud && p.cloud.sync)) return;
       const before = new Map(((prevDb && prevDb.projects) || []).map((p) => [p.id, p]));
       const now = Date.now();
-      for (const pr of this.db.projects) if (pr.cloud && pr.cloud.sync) Sync.stamp(before.get(pr.id) || null, pr, now);
+      const me = window.Cloud && Cloud.account ? Cloud.account.id : null;
+      let blocked = null;
+      this.db.projects = this.db.projects.map((pr) => {
+        if (!(pr.cloud && pr.cloud.sync)) return pr;
+        const prev = before.get(pr.id) || null;
+        const role = pr.cloud.role || 'owner';
+        if (prev && role !== 'owner') {
+          const v = Sync.violations(prev, pr, role, me);
+          if (v.length) { blocked = { role, v: v[0] }; return prev; }
+        }
+        Sync.stamp(prev, pr, now, me);
+        return pr;
+      });
+      if (blocked) {
+        const what = { delete: 'למחוק את זה', edit: 'לשנות פריט שלא את/ה הוספת', meta: 'לשנות את הגדרות הפרויקט', add: 'להוסיף או לשנות' }[blocked.v.what];
+        toast('אין לך הרשאה ' + what + ' בפרויקט הזה (ההרשאה שלך: ' + Sync.rights(blocked.role).label + ')');
+        setTimeout(() => window.App && App.render(), 0);
+      }
     },
     // לקרוא אחרי כל שינוי ב-db. מצב הקודם נשמר לביטול.
     commit() {

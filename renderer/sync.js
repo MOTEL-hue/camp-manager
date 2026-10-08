@@ -28,8 +28,44 @@
     return JSON.stringify(m);
   }
 
-  // אחרי כל שינוי מקומי: מסמנים זמן לפריטים שהשתנו, ורושמים מחיקות.
-  function stamp(prev, cur, now) {
+  // הרשאות בשיתוף. "שלו" = פריט שהוא הוסיף (_by = מזהה החשבון שלו). פריטים בלי _by שייכים ליוצר הפרויקט.
+  // רישום (enrollments) נחשב הוספת נתונים: מי שמותר לו להוסיף יכול גם לסמן רישום.
+  const ROLES = {
+    editor: { label: 'עריכה מלאה', add: true, editAll: true, editOwn: true, delAll: true, delOwn: true, meta: true },
+    nodelete: { label: 'הוספה ועריכה, בלי מחיקה', add: true, editAll: true, editOwn: true, delAll: false, delOwn: false, meta: true },
+    own: { label: 'הוספה, ועריכה ומחיקה רק של מה שהוסיף/ה', add: true, editAll: false, editOwn: true, delAll: false, delOwn: true, meta: false },
+    add: { label: 'הוספה בלבד (תיקון רק של מה שהוסיף/ה, בלי מחיקה)', add: true, editAll: false, editOwn: true, delAll: false, delOwn: false, meta: false },
+    viewer: { label: 'צפייה בלבד', add: false, editAll: false, editOwn: false, delAll: false, delOwn: false, meta: false },
+  };
+  const rights = (role) => ROLES[role] || ROLES.editor; // owner, וגם "editor" של גרסאות קודמות
+
+  // מה מהשינוי prev -> cur אסור לפי ההרשאה. [] = הכול מותר.
+  function violations(prev, cur, role, me) {
+    const r = rights(role);
+    if (!prev || (r.editAll && r.delAll && r.meta)) return [];
+    const out = [];
+    const mine = (e) => e && e._by != null && String(e._by) === String(me);
+    for (const k of ARRAYS) {
+      const before = new Map((prev[k] || []).map((e) => [e.id, e]));
+      const ids = new Set();
+      for (const e of cur[k] || []) {
+        ids.add(e.id);
+        const b = before.get(e.id);
+        if (!b) { if (!r.add) out.push({ k, id: e.id, what: 'add' }); }
+        else if (bare(b) !== bare(e) && !(r.editAll || (r.editOwn && mine(b)))) out.push({ k, id: e.id, what: 'edit' });
+      }
+      for (const [id, b] of before) if (!ids.has(id) && !(r.delAll || (r.delOwn && mine(b)))) out.push({ k, id, what: 'delete' });
+    }
+    const be = prev.enrollments || {};
+    const ce = cur.enrollments || {};
+    for (const [id, e] of Object.entries(ce)) if ((!be[id] || bare(be[id]) !== bare(e)) && !r.add) out.push({ k: 'enrollments', id, what: be[id] ? 'edit' : 'add' });
+    for (const [id, b] of Object.entries(be)) if (!ce[id] && !(r.delAll || (r.delOwn && mine(b)))) out.push({ k: 'enrollments', id, what: 'delete' });
+    if (metaOf(prev) !== metaOf(cur) && !r.meta) out.push({ k: 'meta', what: 'meta' });
+    return out;
+  }
+
+  // אחרי כל שינוי מקומי: מסמנים זמן לפריטים שהשתנו, ורושמים מחיקות. me = מי הוסיף פריטים חדשים.
+  function stamp(prev, cur, now, me) {
     cur.tombstones = cur.tombstones || {};
     if (!prev) {
       for (const k of ARRAYS) for (const e of cur[k] || []) if (!e._t) e._t = now;
@@ -43,6 +79,7 @@
       for (const e of cur[k] || []) {
         ids.add(e.id);
         const b = before.get(e.id);
+        if (!b && me != null && e._by == null) e._by = me;
         if (!b || bare(b) !== bare(e)) e._t = now;
         else if (b._t && !e._t) e._t = b._t;
       }
@@ -51,6 +88,7 @@
     const be = prev.enrollments || {};
     const ce = cur.enrollments || {};
     for (const [id, e] of Object.entries(ce)) {
+      if (!be[id] && me != null && e._by == null) e._by = me;
       if (!be[id] || bare(be[id]) !== bare(e)) e._t = now;
     }
     for (const id of Object.keys(be)) if (!ce[id]) cur.tombstones['enrollments:' + id] = now;
@@ -102,5 +140,5 @@
     return c;
   }
 
-  return { ARRAYS, stamp, merge, forUpload };
+  return { ARRAYS, ROLES, rights, violations, stamp, merge, forUpload };
 });
