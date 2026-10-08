@@ -34,6 +34,14 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
-      - run: npx electron-builder --win --x64 --publish always
+      # בונים בלי להעלות, ומעלים בפקודה אחת עם gh: ב-electron-builder 26 ההעלאה המקבילה ניסתה ליצור את
+      # אותה גרסה פעמיים ונכשלה ("Published releases must have a valid tag").
+      - run: npx electron-builder --win --x64 --publish never
+      - name: publish release
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V="${{ needs.check.outputs.version }}"
+          gh release create "v$V" dist/*.exe dist/*.blockmap dist/latest.yml \
+            --title "$V" --target "$GITHUB_SHA" --notes "גרסה $V - מתעדכנת לבד בתוכנות המותקנות."
