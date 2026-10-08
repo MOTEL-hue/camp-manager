@@ -3,12 +3,21 @@ const { app, BrowserWindow, ipcMain, dialog, shell, Menu, net, safeStorage } = r
 const path = require('path');
 const fs = require('fs');
 
-// בגרסה הניידת electron-builder מגדיר PORTABLE_EXECUTABLE_DIR, והנתונים נשמרים בתיקייה ליד הקובץ,
-// כך שהם עוברים יחד איתו (למשל בדיסק-און-קי).
-const PORTABLE_DIR = process.env.PORTABLE_EXECUTABLE_DIR;
+// גרסה ניידת בתיקייה (הגרסה המהירה): תיקייה שנפרסה מקובץ zip, עם הקובץ portable.flag ליד קובץ ההפעלה.
+// אין פירוק בכל פתיחה, ולכן היא נפתחת מיד. גרסה ניידת בקובץ יחיד (הישנה): electron-builder מגדיר
+// PORTABLE_EXECUTABLE_DIR והיא מתפרקת בכל פתיחה. בשתיהן הנתונים נשמרים בתיקייה ליד התוכנה,
+// כך שהם עוברים יחד איתה (למשל בדיסק-און-קי).
+const EXE_DIR = path.dirname(process.execPath);
+const FOLDER_PORTABLE = app.isPackaged && fs.existsSync(path.join(EXE_DIR, 'portable.flag'));
+const LEGACY_PORTABLE_DIR = process.env.PORTABLE_EXECUTABLE_DIR;
+const PORTABLE_DIR = LEGACY_PORTABLE_DIR || (FOLDER_PORTABLE ? EXE_DIR : undefined);
 const DATA_DIR = process.env.CAMP_MANAGER_DATA
   || (PORTABLE_DIR ? path.join(PORTABLE_DIR, 'נתוני ניהול קייטנות') : path.join(app.getPath('userData'), 'data'));
 const RELEASES_URL = 'https://github.com/MOTEL-hue/camp-manager/releases/latest';
+// כתובת בדיקת הגרסאות; בבדיקות אפשר להפנות למחשב המקומי בלבד.
+const UPDATE_API = /^http:\/\/127\.0\.0\.1[:/]/.test(process.env.CAMP_UPDATE_API || '')
+  ? process.env.CAMP_UPDATE_API
+  : 'https://api.github.com/repos/MOTEL-hue/camp-manager/releases/latest';
 // תיקיית נתונים מפורשת (בבדיקות) מקבלת גם פרופיל דפדפן משלה, כדי ששני מופעים לא יחסמו זה את זה.
 if (process.env.CAMP_MANAGER_DATA) app.setPath('userData', path.join(process.env.CAMP_MANAGER_DATA, 'profile'));
 const DB_FILE = path.join(DATA_DIR, 'db.json');
@@ -311,7 +320,7 @@ ipcMain.handle('cloud:logout', async () => {
 
 ipcMain.handle('db:load', () => loadDb());
 ipcMain.handle('db:save', (_e, data) => saveDb(data));
-ipcMain.handle('app:info', () => ({ version: app.getVersion(), dataDir: DATA_DIR, packaged: app.isPackaged, portable: !!PORTABLE_DIR }));
+ipcMain.handle('app:info', () => ({ version: app.getVersion(), dataDir: DATA_DIR, packaged: app.isPackaged, portable: !!PORTABLE_DIR, folderPortable: FOLDER_PORTABLE, legacyPortable: !!LEGACY_PORTABLE_DIR, releasesUrl: RELEASES_URL }));
 ipcMain.handle('app:openDataDir', () => shell.openPath(DATA_DIR));
 
 ipcMain.handle('file:open', async (_e, opts) => {
@@ -372,100 +381,207 @@ function errText(err) {
   return String((err && (err.message || err.code)) || err);
 }
 
-function newerVersion(a, b) {
-  const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
-  for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
-  return false;
-}
+const updatelib = require('./updatelib');
+const { newerVersion } = updatelib;
 
-// גרסה ניידת: electron-updater לא תומך בה, ולכן מורידים לבד את קובץ ה-EXE החדש לתיקייה שליד הקובץ,
-// וכשהתוכנה נסגרת סקריפט PowerShell קטן מחליף את הקובץ (מחכה שהקובץ הישן ישתחרר) ומפעיל מחדש.
-// הנתונים בתיקייה שליד הקובץ לא נוגעים בהם.
+// ---------- הורדה ובדיקה של קובצי עדכון (משותף לשתי הגרסאות הניידות) ----------
 const STALL_MS = 15 * 60 * 1000;
 
+// טביעת האצבע (SHA-256) של הקובץ שירד מול זו ש-GitHub מפרסם לקובץ. בלי טביעה מ-GitHub
+// (גרסאות ישנות) נשארת רק בדיקת הגודל.
+async function sameAsPublished(file, asset) {
+  const m = /^sha256:([0-9a-f]{64})$/i.exec(String(asset.digest || ''));
+  if (!m) { logUpdate('no digest for ' + asset.name + ' - size check only'); return true; }
+  const hash = await updatelib.sha256File(file);
+  if (hash.toLowerCase() !== m[1].toLowerCase()) { logUpdate('digest mismatch for ' + file); return false; }
+  return true;
+}
+
+// מנהל ההורדות של הדפדפן (כמו בכרום): עוקב אחרי הפניות, ממשיך אחרי ניתוק קצר, ומדווח התקדמות
+// מדויקת. הורדה ידנית בזרם הציגה אצל משתמש התקדמות של מאות אחוזים ולא הסתיימה.
+function chromiumDownload(url, tmp, expectedSize) {
+  return new Promise((resolve, reject) => {
+    const ses = win.webContents.session;
+    const onWill = (_e, item) => {
+      if (item.getURL() !== url && !item.getURLChain().includes(url)) return;
+      ses.removeListener('will-download', onWill);
+      item.setSavePath(tmp);
+      let lastMb = -1;
+      let lastBytes = 0;
+      let lastMove = Date.now();
+      // הורדה שלא זזה רבע שעה (חיבור שנתקע, או סינון שלא משחרר את הקובץ) - מבטלים ומדווחים,
+      // במקום להישאר על 0% לנצח. הבדיקה הבאה (כל שעתיים, או "בדוק עכשיו") מתחילה מחדש.
+      let stalled = false;
+      const watchdog = setInterval(() => {
+        const got = item.getReceivedBytes();
+        if (got !== lastBytes) { lastBytes = got; lastMove = Date.now(); return; }
+        if (Date.now() - lastMove > STALL_MS) { stalled = true; item.cancel(); }
+      }, 30 * 1000);
+      item.on('updated', (_ev, state) => {
+        if (state === 'interrupted') {
+          logUpdate('download interrupted, canResume=' + item.canResume());
+          if (item.canResume()) item.resume(); else item.cancel();
+          return;
+        }
+        const received = item.getReceivedBytes();
+        const total = item.getTotalBytes() || expectedSize;
+        const mb = Math.floor(received / (1024 * 1024));
+        if (mb !== lastMb) {
+          lastMb = mb;
+          sendUpdate('downloading', { percent: Math.min(100, Math.floor((received / total) * 100)), received, total });
+        }
+      });
+      item.once('done', (_ev, state) => {
+        clearInterval(watchdog);
+        if (state === 'completed') resolve();
+        else if (stalled) reject(new Error('ההורדה נתקעה ולא התקדמה רבע שעה. ננסה שוב אוטומטית בעוד שעתיים'));
+        else reject(new Error('ההורדה נעצרה (' + state + ')'));
+      });
+    };
+    ses.on('will-download', onWill);
+    ses.downloadURL(url);
+  });
+}
+
+// מוריד קובץ ל-target, בודק שהוא שלם ושהוא בדיוק הקובץ שפורסם, ורק אז נותן לו את השם הסופי.
+async function downloadVerified(asset, target) {
+  const tmp = target + '.part';
+  try { fs.unlinkSync(tmp); } catch (_) { /* אין קובץ ישן */ }
+  await chromiumDownload(asset.browser_download_url, tmp, asset.size);
+  // קובץ חסר (חיבור שנקטע) לא מחליף את התוכנה.
+  const got = fs.statSync(tmp).size;
+  if (got !== asset.size) { fs.unlinkSync(tmp); throw new Error(`ההורדה לא הושלמה (${got} מתוך ${asset.size} בתים)`); }
+  if (!(await sameAsPublished(tmp, asset))) { fs.unlinkSync(tmp); throw new Error('הקובץ שירד שונה מהקובץ שפורסם - לא מתקינים אותו'); }
+  for (let i = 0; ; i++) {
+    try { fs.renameSync(tmp, target); break; } catch (e) {
+      if (i >= 10) throw e;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+  return target;
+}
+
+async function fetchJson(url) {
+  const res = await net.fetch(url, { headers: { 'User-Agent': 'camp-manager' } });
+  if (!res.ok) throw new Error('GitHub החזיר ' + res.status);
+  return res.json();
+}
+
+// ---------- גרסה ניידת בתיקייה (המהירה) ----------
+// בודקים את קובץ העדכון הקטן (app-update.json). אם רכיב הדפדפן (Electron) לא השתנה - מורידים רק את קוד
+// התוכנה (כמה מגה, דחוס), בודקים אותו מול טביעת האצבע שפורסמה, ובסגירה מחליפים את resources/app.asar.
+// אם הוא השתנה - צריך להוריד את קובץ ה-zip המלא (מוצג כקישור להורדה ידנית).
+function setupFolderUpdater() {
+  const send = sendUpdate;
+  const asarPath = path.join(EXE_DIR, 'resources', 'app.asar');
+  let busy = false;
+  let ready = null; // {version, file}
+
+  const stagingDir = () => {
+    try { fs.accessSync(EXE_DIR, fs.constants.W_OK); return EXE_DIR; } catch (_) { return app.getPath('temp'); }
+  };
+  const fileMatches = async (file, a) => {
+    try { return fs.statSync(file).size === a.size && (await updatelib.sha256File(file)) === a.sha256; } catch (_) { return false; }
+  };
+
+  const check = async () => {
+    if (busy || ready) return updateStatus;
+    busy = true;
+    send('checking');
+    try {
+      const rel = await fetchJson(UPDATE_API);
+      const latest = String(rel.tag_name || '').replace(/^v/, '');
+      if (!updatelib.VERSION_RE.test(latest)) throw new Error('מספר גרסה לא תקין מ-GitHub');
+      if (!newerVersion(latest, app.getVersion())) { send('none', { version: app.getVersion() }); return updateStatus; }
+      const mAsset = (rel.assets || []).find((a) => a.name === updatelib.MANIFEST_NAME);
+      let manifest = null;
+      if (mAsset) manifest = updatelib.parseManifest(await fetchJson(mAsset.browser_download_url));
+      const plan = updatelib.planFolderUpdate({ latest, current: app.getVersion(), electron: process.versions.electron, manifest, assets: rel.assets });
+      if (plan.kind === 'none') { send('none', { version: app.getVersion() }); return updateStatus; }
+      if (plan.kind === 'full') { send('portable', { version: latest, url: plan.url || RELEASES_URL, full: true }); return updateStatus; }
+
+      send('available', { version: latest });
+      const dir = stagingDir();
+      const file = path.join(dir, '.camp-manager-update-' + latest + '.bin'); // לא .asar: Electron מתייחס לשם כזה כאל ארכיון
+      if (!(await fileMatches(file, manifest.asar))) {
+        const gz = await downloadVerified(plan.asset, path.join(dir, '.camp-manager-update-' + latest + '.gz'));
+        try {
+          await updatelib.gunzipVerify(gz, file + '.part', manifest.asar);
+          fs.renameSync(file + '.part', file);
+        } finally {
+          try { fs.unlinkSync(gz); } catch (_) { /* ננקה בהפעלה הבאה */ }
+        }
+      }
+      ready = { version: latest, file };
+      send('ready', { version: latest });
+    } catch (err) {
+      send('error', { message: errText(err) });
+    } finally {
+      busy = false;
+    }
+    return updateStatus;
+  };
+
+  // בסגירה: סקריפט קטן (באותו קובץ הפעלה, במצב Node) מחכה שהתוכנה תיסגר, מחליף את app.asar
+  // ומפעיל מחדש אם ביקשו. את הסקריפט מעתיקים החוצה, כי app.asar עצמו מוחלף.
+  function applyOnExit(relaunch) {
+    if (!ready) return;
+    const script = path.join(app.getPath('temp'), 'camp-manager-apply-update-' + process.pid + '.js');
+    try {
+      fs.writeFileSync(script, fs.readFileSync(path.join(__dirname, 'apply-update.js')));
+    } catch (err) {
+      sendUpdate('error', { message: 'החלפת הקוד נכשלה: ' + errText(err) });
+      return;
+    }
+    sendUpdate('applying', { from: ready.file, to: asarPath });
+    const env = Object.assign({}, process.env, {
+      ELECTRON_RUN_AS_NODE: '1', CM_FROM: ready.file, CM_TO: asarPath, CM_PARENT: String(process.pid),
+      CM_EXE: process.execPath, CM_RELAUNCH: relaunch ? '1' : '0', CM_LOG: path.join(DATA_DIR, 'update-log.txt'),
+    });
+    const child = require('child_process').spawn(process.execPath, [script], { detached: true, stdio: 'ignore', windowsHide: true, env });
+    child.on('error', (err) => sendUpdate('error', { message: 'החלפת הקוד נכשלה: ' + errText(err) }));
+    child.unref();
+    ready = null;
+  }
+
+  // שאריות מעדכון קודם: קבצים של גרסאות שכבר הותקנו נמחקים. קובץ חדש יותר לא נסמך כאן - הבדיקה
+  // מול GitHub (עוד כמה שניות) מאשרת שהוא בדיוק הקוד שפורסם, ורק אז מחליפים בו.
+  for (const dir of [EXE_DIR, app.getPath('temp')]) {
+    let names = [];
+    try { names = fs.readdirSync(dir); } catch (_) { continue; }
+    for (const name of names) {
+      const m = /^\.camp-manager-update-(\d+\.\d+\.\d+)\.(gz|bin)(\.part)?$/.exec(name);
+      if (!m || (!m[3] && m[2] === 'bin' && newerVersion(m[1], app.getVersion()))) continue;
+      try { fs.unlinkSync(path.join(dir, name)); } catch (_) { /* ננסה בפעם הבאה */ }
+    }
+  }
+
+  app.on('will-quit', () => applyOnExit(false));
+  ipcMain.handle('update:install', () => { applyOnExit(true); app.quit(); });
+  ipcMain.handle('update:check', check);
+  setTimeout(check, 5000);
+  setInterval(check, 2 * 60 * 60 * 1000);
+}
+
+// ---------- גרסה ניידת בקובץ יחיד (הישנה) ----------
+// electron-updater לא תומך בה, ולכן מורידים לבד את קובץ ה-EXE החדש לתיקייה שליד הקובץ,
+// וכשהתוכנה נסגרת סקריפט PowerShell קטן מחליף את הקובץ (מחכה שהקובץ הישן ישתחרר) ומפעיל מחדש.
+// הנתונים בתיקייה שליד הקובץ לא נוגעים בהם.
 function setupPortableUpdater() {
   const exePath = process.env.PORTABLE_EXECUTABLE_FILE;
   const send = sendUpdate;
   let downloading = false;
   let ready = null; // {version, file}
 
-  // טביעת האצבע (SHA-256) של הקובץ שירד מול זו ש-GitHub מפרסם לקובץ. בלי טביעה מ-GitHub
-  // (גרסאות ישנות) נשארת רק בדיקת הגודל.
-  async function sameAsPublished(file, asset) {
-    const m = /^sha256:([0-9a-f]{64})$/i.exec(String(asset.digest || ''));
-    if (!m) { logUpdate('no digest for ' + asset.name + ' - size check only'); return true; }
-    const hash = await new Promise((resolve, reject) => {
-      const h = require('crypto').createHash('sha256');
-      fs.createReadStream(file).on('data', (d) => h.update(d)).on('error', reject).on('end', () => resolve(h.digest('hex')));
-    });
-    if (hash.toLowerCase() !== m[1].toLowerCase()) { logUpdate('digest mismatch for ' + file); return false; }
-    return true;
-  }
-
   async function download(asset, version) {
     // שם בלי סיומת exe עד ההחלפה, כדי שאנטי-וירוס לא ינעל את הקובץ באמצע; ואם אי אפשר לכתוב ליד
     // התוכנה (למשל תיקייה מוגנת) - לתיקייה הזמנית של המשתמש.
-    let dir = PORTABLE_DIR;
+    let dir = LEGACY_PORTABLE_DIR;
     try { fs.accessSync(dir, fs.constants.W_OK); } catch (_) { dir = app.getPath('temp'); }
     const target = path.join(dir, '.camp-manager-update-' + version + '.bin');
     // קובץ שכבר ירד (למשל החלפה שנכשלה בפעם הקודמת) - רק אם הוא בדיוק הקובץ שפורסם.
     if (fs.existsSync(target) && fs.statSync(target).size === asset.size && (await sameAsPublished(target, asset))) return target;
-    const tmp = target + '.part';
-    try { fs.unlinkSync(tmp); } catch (_) { /* אין קובץ ישן */ }
-    // מנהל ההורדות של הדפדפן (כמו בכרום): עוקב אחרי הפניות, ממשיך אחרי ניתוק קצר, ומדווח התקדמות
-    // מדויקת. הורדה ידנית בזרם הציגה אצל משתמש התקדמות של מאות אחוזים ולא הסתיימה.
-    await new Promise((resolve, reject) => {
-      const ses = win.webContents.session;
-      const onWill = (_e, item) => {
-        if (item.getURL() !== asset.browser_download_url && !item.getURLChain().includes(asset.browser_download_url)) return;
-        ses.removeListener('will-download', onWill);
-        item.setSavePath(tmp);
-        let lastMb = -1;
-        let lastBytes = 0;
-        let lastMove = Date.now();
-        // הורדה שלא זזה רבע שעה (חיבור שנתקע, או סינון שלא משחרר את הקובץ) - מבטלים ומדווחים,
-        // במקום להישאר על 0% לנצח. הבדיקה הבאה (כל שעתיים, או "בדוק עכשיו") מתחילה מחדש.
-        let stalled = false;
-        const watchdog = setInterval(() => {
-          const got = item.getReceivedBytes();
-          if (got !== lastBytes) { lastBytes = got; lastMove = Date.now(); return; }
-          if (Date.now() - lastMove > STALL_MS) { stalled = true; item.cancel(); }
-        }, 30 * 1000);
-        item.on('updated', (_ev, state) => {
-          if (state === 'interrupted') {
-            logUpdate('download interrupted, canResume=' + item.canResume());
-            if (item.canResume()) item.resume(); else item.cancel();
-            return;
-          }
-          const received = item.getReceivedBytes();
-          const total = item.getTotalBytes() || asset.size;
-          const mb = Math.floor(received / (1024 * 1024));
-          if (mb !== lastMb) {
-            lastMb = mb;
-            send('downloading', { percent: Math.min(100, Math.floor((received / total) * 100)), received, total });
-          }
-        });
-        item.once('done', (_ev, state) => {
-          clearInterval(watchdog);
-          if (state === 'completed') resolve();
-          else if (stalled) reject(new Error('ההורדה נתקעה ולא התקדמה רבע שעה. ננסה שוב אוטומטית בעוד שעתיים'));
-          else reject(new Error('ההורדה נעצרה (' + state + ')'));
-        });
-      };
-      ses.on('will-download', onWill);
-      ses.downloadURL(asset.browser_download_url);
-    });
-    // קובץ חסר (חיבור שנקטע) לא מחליף את התוכנה.
-    const got = fs.statSync(tmp).size;
-    if (got !== asset.size) { fs.unlinkSync(tmp); throw new Error(`ההורדה לא הושלמה (${got} מתוך ${asset.size} בתים)`); }
-    if (!(await sameAsPublished(tmp, asset))) { fs.unlinkSync(tmp); throw new Error('הקובץ שירד שונה מהקובץ שפורסם - לא מתקינים אותו'); }
-    for (let i = 0; ; i++) {
-      try { fs.renameSync(tmp, target); break; } catch (e) {
-        if (i >= 10) throw e;
-        await new Promise((r) => setTimeout(r, 500));
-      }
-    }
-    return target;
+    return downloadVerified(asset, target);
   }
 
   const check = async () => {
@@ -474,9 +590,7 @@ function setupPortableUpdater() {
     downloading = true; // מיד, לפני כל המתנה - כדי ששתי בדיקות צמודות לא יורידו פעמיים
     send('checking');
     try {
-      const res = await net.fetch('https://api.github.com/repos/MOTEL-hue/camp-manager/releases/latest', { headers: { 'User-Agent': 'camp-manager' } });
-      if (!res.ok) throw new Error('GitHub החזיר ' + res.status);
-      const rel = await res.json();
+      const rel = await fetchJson(UPDATE_API);
       const latest = String(rel.tag_name || '').replace(/^v/, '');
       if (!/^\d+\.\d+\.\d+$/.test(latest)) throw new Error('מספר גרסה לא תקין מ-GitHub');
       if (!newerVersion(latest, app.getVersion())) { send('none', { version: app.getVersion() }); return updateStatus; }
@@ -522,7 +636,7 @@ function setupPortableUpdater() {
   // קובץ עדכון שנשאר ליד התוכנה: אם הוא ישן או זהה לגרסה הנוכחית - ההחלפה הצליחה, מוחקים אותו.
   // אם הוא חדש יותר - ההחלפה בפעם הקודמת נכשלה. סומכים עליו רק אחרי שהבדיקה מול GitHub (עוד כמה
   // שניות) מאשרת שהוא בדיוק הקובץ שפורסם - לא סתם כי הוא נמצא בתיקייה.
-  for (const dir of [PORTABLE_DIR, app.getPath('temp')]) {
+  for (const dir of [LEGACY_PORTABLE_DIR, app.getPath('temp')]) {
     let names = [];
     try { names = fs.readdirSync(dir); } catch (_) { continue; }
     for (const name of names) {
@@ -546,7 +660,8 @@ function setupPortableUpdater() {
 
 function setupUpdater() {
   if (!app.isPackaged) return;
-  if (PORTABLE_DIR) return setupPortableUpdater();
+  if (FOLDER_PORTABLE) return setupFolderUpdater();
+  if (LEGACY_PORTABLE_DIR) return setupPortableUpdater();
   let autoUpdater;
   try { ({ autoUpdater } = require('electron-updater')); } catch (_) { return; }
   autoUpdater.autoDownload = true;

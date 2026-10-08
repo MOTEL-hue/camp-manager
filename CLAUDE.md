@@ -19,6 +19,14 @@
   `enrollments` (לפי מזהה אדם), `payments`, `expenses`. העתקה בין פרויקטים: `Importer.copyPeople`.
 - קישור בין פרויקטים (`project.links`): `Logic.coverage` מוצא את האדם בפרויקט המקושר לפי שם+כיתה.
   החישוב צריך את כל הפרויקטים, ולכן `Logic.setProjects` נקרא ב-`Store.commit` וב-`App.render`.
+- שלוש צורות הפצה: **מותקנת** (NSIS; עדכון דיפרנציאלי של `electron-updater`), **ניידת בתיקייה** (zip של
+  `win-unpacked` + `portable.flag`; נפתחת מיד) ו**ניידת בקובץ יחיד** (ישנה; מתפרקת בכל פתיחה, איטית).
+  בניידת בתיקייה (`setupFolderUpdater` ב-`main.js`, ספרייה טהורה ב-`updatelib.js`) מורידים רק את `app.asar` הדחוס
+  (1-2MB, נכס `camp-manager-app-X.asar.gz` + `app-update.json` עם SHA-256 ו-גרסת Electron). אם גרסת ה-Electron
+  השתנתה - מציעים להוריד zip מלא. ההחלפה בסגירה: `apply-update.js` רץ באותו exe במצב Node (`process.noAsar`!),
+  מחכה שהתוכנה תיסגר, מחליף ומפעיל מחדש. `release.yml` בונה את כל הנכסים. בבנייה: לא לשים `.asar` בשם של
+  קובץ זמני (Electron מתייחס אליו כארכיון), ולהשאיר ב-`files` רק מה שנטען (ראו package.json) - כל קובץ מיותר
+  מנפח כל הורדה.
 - עדכון אוטומטי: בגרסה המותקנת `electron-updater`; בגרסה הניידת `setupPortableUpdater` ב-`main.js`
   מוריד את ה-EXE החדש ומחליף אותו ב-PowerShell כשהתוכנה נסגרת. כל שלב נרשם ל-`update-log.txt`
   בתיקיית הנתונים ומוצג בפס העליון ובמסך ההגדרות - שגיאת עדכון אף פעם לא נבלעת בשקט.

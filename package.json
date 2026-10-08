@@ -1,7 +1,7 @@
 {
   "name": "camp-manager",
   "productName": "ניהול קייטנות ומכירות",
-  "version": "1.8.1",
+  "version": "1.9.0",
   "description": "ניהול רשימות, רישום, רכישות, תשלומים, הוצאות וסיכומים",
   "main": "main.js",
   "author": "MOTEL-hue",
@@ -30,9 +30,21 @@
     "files": [
       "main.js",
       "preload.js",
+      "updatelib.js",
+      "apply-update.js",
       "renderer/**",
       "build/icon.png",
-      "package.json"
+      "package.json",
+      "!node_modules/pdfjs-dist/{legacy,cmaps,standard_fonts,web,types,image_decoders,wasm}/**",
+      "!node_modules/pdfjs-dist/build/{*.map,pdf.mjs,pdf.worker.mjs,pdf.sandbox.mjs,pdf.sandbox.min.mjs}",
+      "!node_modules/xlsx/{xlsx.js,xlsx.mjs,xlsx.flow.js,jszip.js,bin,types,tests}/**",
+      "!node_modules/xlsx/{xlsx.js,xlsx.mjs,xlsx.flow.js,jszip.js}",
+      "!node_modules/xlsx/dist/{cpexcel.full.mjs,cpexcel.js,shim.min.js,xlsx.core.min.js,xlsx.core.min.map,xlsx.extendscript.js,xlsx.full.min.map,xlsx.mini.min.js,xlsx.mini.min.map,xlsx.zahl.js,xlsx.zahl.mjs}",
+      "!node_modules/@napi-rs/**",
+      "!node_modules/{codepage,cfb,frac,crc-32,ssf,adler-32,wmf,word}/**",
+      "!node_modules/xlsx/{bower.json,xlsxworker.js,formats.png,legend.png}",
+      "!node_modules/pdfjs-dist/{webpack.mjs,CODE_OF_CONDUCT.md}",
+      "!**/*.map"
     ],
     "win": {
       "target": [
@@ -77,6 +89,11 @@
     "portable": {
       "artifactName": "camp-manager-portable-${version}.${ext}",
       "requestExecutionLevel": "user"
-    }
+    },
+    "electronLanguages": [
+      "he",
+      "en-US"
+    ],
+    "compression": "maximum"
   }
 }

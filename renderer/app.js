@@ -174,5 +174,28 @@
     if (await Cloud.refreshAccount()) setTimeout(() => Cloud.syncAll(), 1500);
     setInterval(() => Cloud.syncAll(), 5 * 60 * 1000);
     window.addEventListener('online', () => Cloud.syncAll());
+    if (info.legacyPortable) setTimeout(() => fastPortableHint(info), 4000);
   })();
+
+  // הגרסה הניידת בקובץ יחיד מתפרקת בכל פתיחה (לכן היא נפתחת לאט) ומורידה 100MB בכל עדכון.
+  // הגרסה בתיקייה נפתחת מיד ומתעדכנת בכמה שניות. מציעים אותה פעם אחת לכל גרסה.
+  function fastPortableHint(info) {
+    const key = 'fast-portable-hint-' + info.version;
+    try { if (localStorage.getItem(key)) return; localStorage.setItem(key, '1'); } catch (_) { /* בלי אחסון */ }
+    UI.modal({
+      title: '⚡ יש גרסה ניידת מהירה יותר',
+      body: el('div', null,
+        el('p', null, 'הגרסה הניידת שאתם משתמשים בה (קובץ אחד) מתפרקת מחדש בכל פתיחה, ולכן היא נפתחת לאט, וכל עדכון מוריד 100MB.'),
+        el('p', null, 'הגרסה החדשה בתיקייה נפתחת מיד, ומתעדכנת בכמה שניות (מורידה רק 1-2MB). איך עוברים:'),
+        el('ol', null,
+          el('li', null, 'כאן, בהגדרות וגיבוי: "שמירת קובץ גיבוי".'),
+          el('li', null, 'מורידים את קובץ ה-zip של הגרסה הניידת המהירה מעמוד הגרסאות ופורסים אותו לתיקייה (לחיצה ימנית ← חילוץ הכול).'),
+          el('li', null, 'מפעילים את camp-manager.exe שבתיקייה, ובהגדרות וגיבוי: "שחזור מקובץ גיבוי".')),
+        el('p', { class: 'muted' }, 'פרויקטים מסונכרנים יחזרו גם לבד אחרי כניסה לחשבון. אין חובה לעבור - הגרסה הנוכחית ממשיכה לעבוד ולהתעדכן.')),
+      buttons: [
+        { label: 'לעמוד ההורדה', primary: true, onclick: () => window.open(info.releasesUrl) },
+        { label: 'אחר כך' },
+      ],
+    });
+  }
 })();

@@ -37,6 +37,16 @@ jobs:
       # בונים בלי להעלות, ומעלים בפקודה אחת עם gh: ב-electron-builder 26 ההעלאה המקבילה ניסתה ליצור את
       # אותה גרסה פעמיים ונכשלה ("Published releases must have a valid tag").
       - run: npx electron-builder --win --x64 --publish never
+      - name: fast portable (zip) and code-only update
+        shell: bash
+        run: |
+          V="${{ needs.check.outputs.version }}"
+          # הגרסה הניידת המהירה: התיקייה הלא-ארוזה, עם הסימון portable.flag - נפתחת מיד, בלי פירוק בכל פעם.
+          mv dist/win-unpacked dist/camp-manager
+          echo "הקובץ הזה מסמן שזו גרסה ניידת: הנתונים נשמרים בתיקייה 'נתוני ניהול קייטנות' ליד התוכנה. אל תמחקו אותו." > dist/camp-manager/portable.flag
+          (cd dist && 7z a -tzip -mx=9 "camp-manager-fast-portable-$V.zip" camp-manager > /dev/null)
+          # עדכון קוד בלבד (כמה מגה): app.asar דחוס + קובץ app-update.json עם טביעת האצבע.
+          node scripts/make-update-manifest.js "$V" dist/camp-manager/resources/app.asar dist/update-assets
       - name: publish release
         shell: bash
         env:
@@ -44,4 +54,5 @@ jobs:
         run: |
           V="${{ needs.check.outputs.version }}"
           gh release create "v$V" dist/*.exe dist/*.blockmap dist/latest.yml \
-            --title "$V" --target "$GITHUB_SHA" --notes "גרסה $V - מתעדכנת לבד בתוכנות המותקנות."
+            "dist/camp-manager-fast-portable-$V.zip" dist/update-assets/* \
+            --title "$V" --target "$GITHUB_SHA" --notes "גרסה $V - מתעדכנת לבד בתוכנות המותקנות. הגרסה הניידת המהירה: קובץ ה-zip (לפרוס לתיקייה ולהפעיל את camp-manager.exe)."
