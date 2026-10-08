@@ -73,10 +73,11 @@ test('החלפת קובץ הקוד: מחכה שהתוכנה תיסגר, ומפע
   const marker = path.join(dir, 'relaunched.txt');
   // "התוכנה": תהליך שנסגר אחרי רבע שנייה
   const parent = require('child_process').spawn(process.execPath, ['-e', 'setTimeout(()=>{}, 300)'], { stdio: 'ignore' });
-  const exe = path.join(dir, process.platform === 'win32' ? 'relaunch.cmd' : 'relaunch.sh');
-  fs.writeFileSync(exe, process.platform === 'win32' ? `@echo off\r\necho x> "${marker}"\r\n` : `#!/bin/sh\necho x > "${marker}"\n`, { mode: 0o755 });
+  // "הפעלה מחדש": מפעילים את node עצמו עם סקריפט קטן שרושם סימן (קובץ .cmd אי אפשר להפעיל ישירות בווינדוס)
+  const relaunchScript = path.join(dir, 'relaunch.js');
+  fs.writeFileSync(relaunchScript, `require('fs').writeFileSync(${JSON.stringify(marker)}, 'x')`);
   const t0 = Date.now();
-  const ok = await applySwap({ from, to, parentPid: parent.pid, exe, relaunch: true, log, delayMs: 50 });
+  const ok = await applySwap({ from, to, parentPid: parent.pid, exe: process.execPath, exeArgs: [relaunchScript], relaunch: true, log, delayMs: 50 });
   assert.ok(ok);
   assert.ok(Date.now() - t0 >= 200, 'לא חיכה לסגירה');
   assert.strictEqual(fs.readFileSync(to, 'utf8'), 'חדש');

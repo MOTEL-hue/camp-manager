@@ -15,7 +15,7 @@ function note(log, text) {
   try { fs.appendFileSync(log, new Date().toISOString() + ' ' + text + '\n'); } catch (_) { /* היומן הוא עזר בלבד */ }
 }
 
-async function applySwap({ from, to, parentPid, exe, relaunch, log, delayMs = 500, waitTries = 120, retries = 120 }) {
+async function applySwap({ from, to, parentPid, exe, exeArgs = [], relaunch, log, delayMs = 500, waitTries = 120, retries = 120 }) {
   // קודם מחכים שהתוכנה תיסגר - אחרת ההחלפה יכולה להצליח בזמן שהיא עוד רצה, וההפעלה מחדש תיחסם.
   for (let i = 0; parentPid && alive(parentPid) && i < waitTries; i++) await sleep(delayMs);
   let ok = false;
@@ -36,7 +36,7 @@ async function applySwap({ from, to, parentPid, exe, relaunch, log, delayMs = 50
   if (relaunch && exe) {
     const env = Object.assign({}, process.env);
     for (const k of Object.keys(env)) if (k === 'ELECTRON_RUN_AS_NODE' || k.startsWith('CM_')) delete env[k];
-    const child = spawn(exe, [], { detached: true, stdio: 'ignore', env });
+    const child = spawn(exe, exeArgs, { detached: true, stdio: 'ignore', env });
     child.on('error', (e) => note(log, 'relaunch-FAILED ' + e.message));
     child.unref();
     await sleep(300); // נותנים ל-spawn להתחיל לפני שהתהליך הזה מסתיים
