@@ -46,6 +46,15 @@ function parseManifest(m) {
   return { version: m.version, electron: String(m.electron), asar: { name: a.name, sha256: a.sha256.toLowerCase(), size: a.size } };
 }
 
+// התקדמות הורדה מ-electron-updater. בהורדה חכמה (רק החלקים ששונו) הוא מדווח לפעמים total קטן ממה שכבר ירד
+// (484%). אז לא מציגים אחוזים אלא רק כמה ירד; האחוזים אף פעם לא עוברים 100.
+function progressInfo(p) {
+  const received = Math.max(0, Number(p.transferred) || 0);
+  const total = Number(p.total) || 0;
+  const sane = total > 0 && received <= total;
+  return { percent: sane ? Math.min(100, Math.round((received / total) * 100)) : 0, received, total: sane ? total : 0, speed: Math.round(Number(p.bytesPerSecond) || 0) };
+}
+
 // כתובת ההורדה של ה-zip המלא (להורדה ידנית בדפדפן), אם קיים בגרסה.
 function fastZipUrl(assets, version) {
   const zip = (assets || []).find((a) => a.name === fastZipName(version));
@@ -87,4 +96,4 @@ function gunzipVerify(gzFile, outFile, { sha256, size }) {
   });
 }
 
-module.exports = { MANIFEST_NAME, VERSION_RE, asarAssetName, fastZipName, newerVersion, fastZipUrl, sha256File, makeManifest, parseManifest, planFolderUpdate, gunzipVerify };
+module.exports = { MANIFEST_NAME, VERSION_RE, asarAssetName, fastZipName, newerVersion, progressInfo, fastZipUrl, sha256File, makeManifest, parseManifest, planFolderUpdate, gunzipVerify };

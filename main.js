@@ -737,7 +737,7 @@ function setupUpdater() {
   autoUpdater.on('checking-for-update', () => send('checking'));
   autoUpdater.on('update-available', (i) => send('available', { version: i.version }));
   autoUpdater.on('update-not-available', () => send('none', { version: app.getVersion() }));
-  autoUpdater.on('download-progress', (p) => send('downloading', { percent: Math.round(p.percent), received: p.transferred, total: p.total }));
+  autoUpdater.on('download-progress', (p) => send('downloading', updatelib.progressInfo(p)));
   autoUpdater.on('update-downloaded', (i) => send('ready', { version: i.version }));
   autoUpdater.on('error', (err) => send('error', { message: errText(err) }));
   ipcMain.handle('update:install', () => autoUpdater.quitAndInstall());

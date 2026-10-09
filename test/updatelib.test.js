@@ -110,3 +110,12 @@ test('סקריפט הבנייה יוצר קובץ דחוס וקובץ עדכון
   await U.gunzipVerify(path.join(dir, 'out', m.asar.name), path.join(dir, 'check.asar'), m.asar);
   assert.strictEqual(m.electron, require('electron/package.json').version);
 });
+
+test('התקדמות הורדה: אף פעם לא מעל 100%, וכשהסכום הכולל לא אמין מציגים רק כמה ירד', () => {
+  assert.deepStrictEqual(U.progressInfo({ transferred: 500, total: 1000, bytesPerSecond: 50 }), { percent: 50, received: 500, total: 1000, speed: 50 });
+  const odd = U.progressInfo({ transferred: 6.2 * 1048576, total: 1.3 * 1048576, percent: 484 }); // המקרה שהופיע בתוכנה המותקנת
+  assert.strictEqual(odd.percent, 0);
+  assert.strictEqual(odd.total, 0);
+  assert.ok(odd.received > 6e6);
+  assert.strictEqual(U.progressInfo({}).received, 0);
+});
