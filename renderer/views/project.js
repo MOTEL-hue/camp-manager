@@ -133,7 +133,11 @@
             ? el('span', { class: 'pill covered', title: `${L.money(r.covered)} מכוסה דרך "${r.coverLabel}"` }, (r.status === 'covered' ? 'פטור · ' : 'הנחה · ') + r.coverLabel)
             : pill(r.status));
           tr.classList.toggle('dim', !r.participant && !r.paid);
+          refundBtn.classList.toggle('hidden', !(r.balance < 0));
+          refundBtn.title = 'החזר זיכוי / עודף של ' + L.money(-r.balance);
         };
+        // יתרת זיכוי (שולם יותר ממה שצריך, למשל אחרי שהמנהל כיסה): כפתור שרושם את ההחזר וסוגר את היתרה.
+        const refundBtn = el('button', { class: 'btn small hidden', onclick: () => refundDialog(pr, p) }, '↩️ החזר עודף');
         const touch = (fn) => { const en = L.ensureEnrollment(pr, p.id); fn(en); Store.commit(); recalc(); updateFooter(); };
         const tr = el('tr', null,
           el('td', null, L.fullName(p) || '(ללא שם)'),
@@ -153,7 +157,7 @@
           el('td', null, el('input', { type: 'text', value: e.note || '', placeholder: '', style: { minWidth: '120px' }, onchange: (ev) => touch((en) => { en.note = ev.target.value.trim(); }) })),
           money ? el('td', null,
             el('button', { class: 'btn small', title: 'רישום תשלום', onclick: () => paymentDialog(pr, p) }, '💰'),
-            ' ',
+            ' ', refundBtn, ' ',
             el('button', { class: 'btn small', title: 'קבלה / פירוט', onclick: () => receiptDialog(pr, p) }, '🧾')) : null);
         recalc();
         body.appendChild(tr);
@@ -288,6 +292,34 @@
     });
   }
   Views.paymentDialog = paymentDialog;
+
+  // החזר עודף / זיכוי: רושם "תשלום" שלילי בגובה היתרה, כך שהיתרה מתאפסת וההחזר נספר בקופה לפי אמצעי התשלום.
+  function refundDialog(pr, p) {
+    const credit = L.round2(L.paidBy(pr, p.id) - L.amountDue(pr, p));
+    if (credit <= 0) { toast('אין יתרת זיכוי'); return; }
+    const amount = el('input', { type: 'number', min: 0, step: 'any', value: credit });
+    const method = select(L.PAYMENT_METHODS, Store.db.settings.lastMethod || 'מזומן');
+    const note = el('input', { type: 'text', value: 'החזר עודף / זיכוי' });
+    modal({
+      title: 'החזר עודף / זיכוי',
+      body: el('div', null,
+        el('p', null, `${L.fullName(p)} שילם/ה ${L.money(credit)} יותר ממה שנדרש.`),
+        el('div', { class: 'form-row' }, field('סכום להחזרה (₪)', amount), field('איך הוחזר', method)),
+        field('הערה', note),
+        el('p', { class: 'muted small' }, 'נרשם כהחזר (תשלום שלילי): היתרה תתאפס, והמזומן בקופה יתעדכן. אם מחזירים פחות, יישאר זיכוי לשאר.')),
+      buttons: [
+        { label: 'הוחזר', primary: true, onclick: () => {
+          const amt = L.round2(Math.min(credit, L.num(amount.value)));
+          if (amt <= 0) { amount.focus(); return false; }
+          Store.db.settings.lastMethod = method.value;
+          pr.payments.push({ id: L.uid(), personId: p.id, amount: -amt, method: method.value, date: today(), note: note.value.trim(), refund: true, createdAt: new Date().toISOString() });
+          App.changed();
+          toast(`נרשם החזר ${L.money(amt)}`, { label: 'בטל', fn: () => { Store.undo(); App.render(); } });
+        } },
+        { label: 'ביטול' },
+      ],
+    });
+  }
 
   // ---------- תשלומים ----------
   function paymentsTab(root, pr) {
