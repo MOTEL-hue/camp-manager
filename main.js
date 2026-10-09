@@ -538,11 +538,12 @@ async function fetchJson(url) {
 // בודקים את קובץ העדכון הקטן (app-update.json). אם רכיב הדפדפן (Electron) לא השתנה - מורידים רק את קוד
 // התוכנה (כמה מגה, דחוס), בודקים אותו מול טביעת האצבע שפורסמה, ובסגירה מחליפים את resources/app.asar.
 // אם הוא השתנה - צריך להוריד את קובץ ה-zip המלא (מוצג כקישור להורדה ידנית).
-function setupFolderUpdater() {
+function setupFolderUpdater(opts = {}) {
   const send = sendUpdate;
   const asarPath = path.join(EXE_DIR, 'resources', 'app.asar');
   let busy = false;
   let ready = null; // {version, file}
+  let fullMode = false; // רכיב הדפדפן השתנה: ההורדה והעדכון נעשים דרך electron-updater (מתקין מלא)
 
   const stagingDir = () => {
     try { fs.accessSync(EXE_DIR, fs.constants.W_OK); return EXE_DIR; } catch (_) { return app.getPath('temp'); }
@@ -565,7 +566,11 @@ function setupFolderUpdater() {
       if (mAsset) manifest = updatelib.parseManifest(await fetchJson(mAsset.browser_download_url));
       const plan = updatelib.planFolderUpdate({ latest, current: app.getVersion(), electron: process.versions.electron, manifest, assets: rel.assets });
       if (plan.kind === 'none') { send('none', { version: app.getVersion() }); return updateStatus; }
-      if (plan.kind === 'full') { send('portable', { version: latest, url: plan.url || RELEASES_URL, full: true }); return updateStatus; }
+      if (plan.kind === 'full') {
+        if (opts.full) { fullMode = true; await opts.full.check(); return updateStatus; }
+        send('portable', { version: latest, url: plan.url || RELEASES_URL, full: true });
+        return updateStatus;
+      }
 
       send('available', { version: latest });
       const dir = stagingDir();
@@ -624,7 +629,7 @@ function setupFolderUpdater() {
   }
 
   app.on('will-quit', () => applyOnExit(false));
-  ipcMain.handle('update:install', () => { applyOnExit(true); app.quit(); });
+  ipcMain.handle('update:install', () => { if (fullMode) return opts.full.install(); applyOnExit(true); app.quit(); });
   ipcMain.handle('update:check', check);
   setTimeout(check, 5000);
   setInterval(check, 2 * 60 * 60 * 1000);
@@ -725,12 +730,11 @@ function setupPortableUpdater() {
   setInterval(check, 2 * 60 * 60 * 1000);
 }
 
-function setupUpdater() {
-  if (!app.isPackaged) return;
-  if (FOLDER_PORTABLE) return setupFolderUpdater();
-  if (LEGACY_PORTABLE_DIR) return setupPortableUpdater();
+// עדכון מלא של הגרסה המותקנת (electron-updater): מתקין חדש, להורדה גדולה. משמש כשרכיב הדפדפן מתחלף,
+// או כשאי אפשר להחליף את קובץ הקוד (תיקייה מוגנת).
+function createFullUpdater() {
   let autoUpdater;
-  try { ({ autoUpdater } = require('electron-updater')); } catch (_) { return; }
+  try { ({ autoUpdater } = require('electron-updater')); } catch (_) { return null; }
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
   const send = sendUpdate;
@@ -740,12 +744,26 @@ function setupUpdater() {
   autoUpdater.on('download-progress', (p) => send('downloading', updatelib.progressInfo(p)));
   autoUpdater.on('update-downloaded', (i) => send('ready', { version: i.version }));
   autoUpdater.on('error', (err) => send('error', { message: errText(err) }));
-  ipcMain.handle('update:install', () => autoUpdater.quitAndInstall());
-  ipcMain.handle('update:check', async () => { await autoUpdater.checkForUpdates().catch(() => null); return updateStatus; });
+  return { check: () => autoUpdater.checkForUpdates().catch(() => null), install: () => autoUpdater.quitAndInstall() };
+}
+
+function setupUpdater() {
+  if (!app.isPackaged) return;
+  if (FOLDER_PORTABLE) return setupFolderUpdater();
+  if (LEGACY_PORTABLE_DIR) return setupPortableUpdater();
+  // מותקנת: ברוב העדכונים מורידים רק את קוד התוכנה (1-2MB) ומחליפים בסגירה, כמו בניידת המהירה - מהיר
+  // גם ברשת מסוננת. התקנה פר-משתמש כותבת לתיקיית התוכנה; אם אי אפשר לכתוב שם - רק עדכון מלא.
+  const full = createFullUpdater();
+  let writable = false;
+  // בודקים את התיקייה ולא את app.asar: Electron מתייחס לנתיב שמסתיים ב-.asar כארכיון (לקריאה בלבד).
+  try { fs.accessSync(path.join(EXE_DIR, 'resources'), fs.constants.W_OK); writable = true; } catch (_) { /* מוגן */ }
+  if (writable) return setupFolderUpdater({ full });
+  if (!full) return;
+  ipcMain.handle('update:install', () => full.install());
+  ipcMain.handle('update:check', async () => { await full.check(); return updateStatus; });
   // בלי אינטרנט הבדיקה פשוט נכשלת בשקט, ומנסים שוב כל שעתיים.
-  const check = () => autoUpdater.checkForUpdates().catch(() => null);
-  setTimeout(check, 5000);
-  setInterval(check, 2 * 60 * 60 * 1000);
+  setTimeout(full.check, 5000);
+  setInterval(full.check, 2 * 60 * 60 * 1000);
 }
 
 if (!app.requestSingleInstanceLock()) {

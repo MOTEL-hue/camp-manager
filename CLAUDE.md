@@ -22,7 +22,7 @@
   `camps/permissions.py` (אחרת היא לא מתמזגת בסנכרון ולא מוגנת בהרשאות). העתקה בין פרויקטים: `Importer.copyPeople`.
 - קישור בין פרויקטים (`project.links`): `Logic.coverage` מוצא את האדם בפרויקט המקושר לפי שם+כיתה.
   החישוב צריך את כל הפרויקטים, ולכן `Logic.setProjects` נקרא ב-`Store.commit` וב-`App.render`.
-- שלוש צורות הפצה: **מותקנת** (NSIS; עדכון דיפרנציאלי של `electron-updater`), **ניידת בתיקייה** (zip של
+- שלוש צורות הפצה: **מותקנת** (NSIS פר-משתמש; עדכון קוד בלבד כמו בניידת בתיקייה, ורק כשגרסת Electron מתחלפת - `electron-updater` מלא דרך `createFullUpdater`), **ניידת בתיקייה** (zip של
   `win-unpacked` + `portable.flag`; נפתחת מיד) ו**ניידת בקובץ יחיד** (ישנה; מתפרקת בכל פתיחה, איטית).
   בניידת בתיקייה (`setupFolderUpdater` ב-`main.js`, ספרייה טהורה ב-`updatelib.js`) מורידים רק את `app.asar` הדחוס
   (1-2MB, נכס `camp-manager-app-X.asar.gz` + `app-update.json` עם SHA-256 ו-גרסת Electron). אם גרסת ה-Electron
