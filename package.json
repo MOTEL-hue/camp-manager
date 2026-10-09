@@ -1,7 +1,7 @@
 {
   "name": "camp-manager",
   "productName": "ניהול קייטנות ומכירות",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "ניהול רשימות, רישום, רכישות, תשלומים, הוצאות וסיכומים",
   "main": "main.js",
   "author": "MOTEL-hue",

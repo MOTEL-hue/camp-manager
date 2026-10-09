@@ -434,6 +434,20 @@
 
   // יתרות לשלוחת הטלפון באתר: {טלפון: [{name, project, due, paid, balance, covered}]}. מחושב כאן,
   // כדי שהאתר רק יקרא תשובה מוכנה כשהורה מתקשר.
+  // סיכום סופי של ההכנסות: מה ששילמו המשתתפים + מה שמגיע מגורמים מקושרים (למשל המנהל / העירייה), פחות
+  // הוצאות. s = תוצאת summary.
+  function finalSummary(project, s) {
+    const fromPeople = round2(s.paid);
+    const fromSources = round2(s.covered);
+    const bySource = Object.entries(s.coveredBy || {}).map(([label, v]) => ({ label, count: v.count, amount: v.amount }));
+    const income = round2(fromPeople + fromSources);
+    const net = round2(income - s.expenses);
+    return {
+      fromPeople, fromSources, bySource, income, expenses: s.expenses, net,
+      stillToCollect: s.balance, expectedIncome: round2(income + s.balance), expectedNet: round2(net + s.balance),
+    };
+  }
+
   // ---------- ספקים ----------
   // כל מוצר יכול להיות משויך לספק (product.supplierId). ההזמנה מתחלקת לפי ספק, עם סה"כ לכל ספק. מחיר
   // ההזמנה הוא "מחיר מהספק" (product.cost) אם הוזן, ואחרת מחיר המכירה. s = תוצאת summary (כמויות לכל מוצר).
@@ -481,7 +495,7 @@
   }
 
   return {
-    phoneBalances, unitCost, supplierOrders, supplierReport,
+    phoneBalances, unitCost, supplierOrders, supplierReport, finalSummary,
     reminderGroups, fillTemplate, DEFAULT_TEMPLATES,
     isYes, migrate, setProjects, coverage, coveredPart, grossDue, findMatch, LINK_CONDITIONS,
     PERSON_FIELDS, PAYMENT_METHODS, STATUS_LABEL,

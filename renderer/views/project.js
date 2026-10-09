@@ -376,10 +376,41 @@
       el('tfoot', null, el('tr', null, el('td'), el('td', null, 'סה"כ'), pr.suppliers.length ? el('td') : null, el('td', { class: 'num' }, L.money(s.expenses)), el('td'), el('td'), el('td'))))));
   }
 
+  // ---------- סיכום סופי: כל ההכנסות, כולל מה שמגיע מהמנהל / גורמים מקושרים ----------
+  function finalRows(f) {
+    const rows = [['שולם על ידי המשתתפים', f.fromPeople]];
+    for (const x of f.bySource) rows.push([`${x.label} (${x.count} משתתפים)`, x.amount]);
+    return rows;
+  }
+
+  function finalCard(pr, s) {
+    const f = L.finalSummary(pr, s);
+    const row = (label, val, cls) => el('tr', { class: cls || '' }, el('td', null, label), el('td', { class: 'num' }, L.money(val)));
+    return el('div', { class: 'card final-card', style: { marginBottom: '16px' } },
+      el('div', { class: 'toolbar' }, el('h3', { style: { margin: 0 } }, '🧮 סיכום סופי - כל ההכנסות'), el('div', { class: 'grow' }),
+        el('button', { class: 'btn small', onclick: () => printFinal(pr, f) }, '🖨️ הדפסה')),
+      el('table', { class: 'data' }, el('tbody', null,
+        finalRows(f).map(([l, v]) => row(l, v)),
+        row('סה"כ הכנסות', f.income, 'total'),
+        row('הוצאות', -f.expenses),
+        row('רווח נקי (אחרי הוצאות)', f.net, 'total ' + (f.net >= 0 ? 'pos' : 'neg')))),
+      f.stillToCollect > 0 ? el('p', { class: 'muted small', style: { marginTop: '8px' } },
+        `עוד נשאר לגבות מהמשתתפים ${L.money(f.stillToCollect)}. כשכולם ישלמו: הכנסות ${L.money(f.expectedIncome)}, רווח נקי ${L.money(f.expectedNet)}.`) : null,
+      f.fromSources ? el('p', { class: 'muted small' }, 'הסכום מהמנהל / גורמים מקושרים נלקח מהרישום בפרויקטים המקושרים (הגדרות הפרויקט ← קישור).') : null);
+  }
+
+  function printFinal(pr, f) {
+    printNode(printTable(`${pr.name} - סיכום סופי`, ['סעיף', 'סכום'],
+      finalRows(f).map(([l, v]) => [l, L.money(v)])
+        .concat([['סה"כ הכנסות', L.money(f.income)], ['הוצאות', L.money(-f.expenses)], ['רווח נקי (אחרי הוצאות)', L.money(f.net)]])
+        .concat(f.stillToCollect > 0 ? [['עוד נשאר לגבות מהמשתתפים', L.money(f.stillToCollect)], ['רווח נקי כשכולם ישלמו', L.money(f.expectedNet)]] : [])));
+  }
+
   // ---------- סיכום ----------
   function summaryTab(root, pr) {
     const s = L.summary(pr, people());
     const pct = s.due ? Math.round((s.paid / s.due) * 100) : 0;
+    root.appendChild(finalCard(pr, s));
     root.appendChild(el('div', { class: 'grid kpis', style: { marginBottom: '16px' } },
       kpi('משתתפים', s.participants, `${s.counts.paid + s.counts.over} שילמו הכול · ${s.counts.partial} חלקית · ${s.counts.unpaid} לא שילמו`),
       kpi('סה"כ לתשלום', L.money(s.due), 'של כל המשתתפים', 'accent'),
@@ -679,7 +710,8 @@
     const supName = (id) => (pr.suppliers.find((y) => y.id === id) || {}).name || '';
     const exps = [['תאריך', 'הוצאה', 'ספק', 'סכום', 'אמצעי', 'הערה']].concat(pr.expenses.map((x) => [fmtDate(x.date), x.name, supName(x.supplierId), L.num(x.amount), x.method || '', x.note || '']));
     const s = L.summary(pr, ppl);
-    const sum = [['נושא', 'סכום'], ['משתתפים', s.participants], ['סה"כ לתשלום', s.due], ['שולם', s.paid], ['נשאר לגבות', s.balance], ['הוצאות', s.expenses], ['מאזן עכשיו', s.net], ['מאזן צפוי', s.expectedNet], ['מזומן בקופה', s.cashOnHand], [], ['כיתה', 'משתתפים', 'לתשלום', 'שולם', 'יתרה']]
+    const fin = L.finalSummary(pr, s);
+    const sum = [['נושא', 'סכום'], ['--- סיכום סופי ---', ''], ...finalRows(fin), ['סה"כ הכנסות', fin.income], ['הוצאות', fin.expenses], ['רווח נקי', fin.net], [], ['משתתפים', s.participants], ['סה"כ לתשלום', s.due], ['שולם', s.paid], ['נשאר לגבות', s.balance], ['הוצאות', s.expenses], ['מאזן עכשיו', s.net], ['מאזן צפוי', s.expectedNet], ['מזומן בקופה', s.cashOnHand], [], ['כיתה', 'משתתפים', 'לתשלום', 'שולם', 'יתרה']]
       .concat(Object.entries(s.byGroup).map(([g, v]) => [g, v.participants, v.due, v.paid, v.balance]));
     if (pr.products.length) sum.push([], ['מוצר', 'כמות', 'סכום'], ...pr.products.map((x) => [x.name, (s.products[x.id] || {}).qty || 0, (s.products[x.id] || {}).amount || 0]));
     Views.saveXlsx(pr.name + '.xlsx', [{ name: 'רישום', rows: list }, { name: 'תשלומים', rows: pays }, { name: 'הוצאות', rows: exps }, ...Views.suppliersSheets(pr, s), { name: 'סיכום', rows: sum }]);

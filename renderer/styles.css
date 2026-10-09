@@ -221,3 +221,4 @@ tr.dim td input { color: #9aa1b1; }
   .side, main, #modal-root, #toast, #update-banner { display: none !important; }
   #print-root { display: block !important; }
 }
+.final-card tr.total td { font-weight: 700; border-top: 2px solid var(--line, #ddd); }

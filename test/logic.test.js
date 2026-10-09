@@ -254,3 +254,15 @@ test('ספקים: הזמנה לפי ספק, מחיר מהספק, ודוח עם �
   const old = L.migrate({ settings: {}, projects: [{ id: 'z', name: 'ישן', people: [], products: [] }] });
   assert.deepStrictEqual(old.projects[0].suppliers, []);
 });
+
+test('סיכום סופי: הכנסות מהמשתתפים + מהמנהל, פחות הוצאות', () => {
+  const s = { paid: 11050, covered: 9180, coveredBy: { 'מנהל': { count: 54, amount: 9180 } }, expenses: 6122, balance: 170 };
+  const f = L.finalSummary({}, s);
+  assert.strictEqual(f.income, 20230);
+  assert.strictEqual(f.net, 14108);
+  assert.deepStrictEqual(f.bySource, [{ label: 'מנהל', count: 54, amount: 9180 }]);
+  assert.strictEqual(f.expectedNet, 14278); // אחרי שיגבו גם את 170 שנשארו
+  // בלי גורם מקושר: רק מה ששילמו
+  const g = L.finalSummary({}, { paid: 1000, covered: 0, coveredBy: {}, expenses: 300, balance: 0 });
+  assert.deepStrictEqual([g.income, g.net, g.bySource.length], [1000, 700, 0]);
+});
