@@ -20,7 +20,7 @@
   (ו-`product.cost` = מחיר מהספק), הוצאה ב-`expense.supplierId`. חישובים: `Logic.supplierOrders/supplierReport`;
   מסכים: `renderer/views/suppliers.js`. רשימה חדשה בפרויקט = להוסיף ל-`Sync.ARRAYS` וגם ל-`ARRAYS` ב-
   `camps/permissions.py` (אחרת היא לא מתמזגת בסנכרון ולא מוגנת בהרשאות). העתקה בין פרויקטים: `Importer.copyPeople`.
-- קישור בין פרויקטים (`project.links`): `Logic.coverage` מוצא את האדם בפרויקט המקושר לפי שם+כיתה.
+- קישור בין פרויקטים (`project.links`): `Logic.coverage` מוצא את האדם בפרויקט המקושר לפי שם+כיתה, ואם אין - לפי שם בלבד כשהוא יחיד בשני הפרויקטים.
   החישוב צריך את כל הפרויקטים, ולכן `Logic.setProjects` נקרא ב-`Store.commit` וב-`App.render`.
 - שלוש צורות הפצה: **מותקנת** (NSIS פר-משתמש; עדכון קוד בלבד כמו בניידת בתיקייה, ורק כשגרסת Electron מתחלפת - `electron-updater` מלא דרך `createFullUpdater`), **ניידת בתיקייה** (zip של
   `win-unpacked` + `portable.flag`; נפתחת מיד) ו**ניידת בקובץ יחיד** (ישנה; מתפרקת בכל פתיחה, איטית).

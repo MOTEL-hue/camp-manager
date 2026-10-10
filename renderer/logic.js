@@ -119,24 +119,33 @@
     return n(p.firstName) + '|' + n(p.lastName) + (withClass ? '|' + n(p.cls) : '');
   }
 
-  // אותו שם פרטי, משפחה וכיתה; אם באחד הצדדים אין כיתה - מספיק שם מלא, כל עוד הוא יחיד ברשימה.
-  function findMatch(src, person) {
-    let idx = indexCache.get(src.id);
+  function peopleIndex(pr) {
+    let idx = indexCache.get(pr.id);
     if (!idx) {
       idx = { full: new Map(), name: new Map() };
-      for (const p of src.people || []) {
+      for (const p of pr.people || []) {
         const fk = nameKey(p, true), nk = nameKey(p, false);
         if (!idx.full.has(fk)) idx.full.set(fk, p);
         idx.name.set(nk, idx.name.has(nk) ? null : p);
       }
-      indexCache.set(src.id, idx);
+      indexCache.set(pr.id, idx);
     }
+    return idx;
+  }
+
+  // אותו שם פרטי, משפחה וכיתה. אם אין כזה - מספיק שם מלא, כל עוד הוא יחיד בפרויקט המקושר
+  // וגם בפרויקט הזה (own), כי הכיתה נרשמת לפעמים אחרת בכל רשימה.
+  function findMatch(src, person, own) {
     if (nameKey(person, false) === '|') return null;
+    const idx = peopleIndex(src);
     const hit = idx.full.get(nameKey(person, true));
     if (hit) return hit;
-    const byName = idx.name.get(nameKey(person, false));
-    if (byName && (!String(person.cls || '').trim() || !String(byName.cls || '').trim())) return byName;
-    return null;
+    const nk = nameKey(person, false);
+    const byName = idx.name.get(nk);
+    if (!byName) return null;
+    const mine = own && peopleIndex(own).name.get(nk);
+    if (own && (!mine || mine.id !== person.id)) return null;
+    return byName;
   }
 
   const LINK_CONDITIONS = [
@@ -152,7 +161,7 @@
       for (const link of project.links) {
         const src = ALL.find((x) => x.id === link.projectId);
         if (!src || src === project) continue;
-        const m = findMatch(src, person);
+        const m = findMatch(src, person, project);
         if (!m) continue;
         let ok = link.condition === 'listed';
         if (link.condition === 'registered') ok = isParticipant(src, m);

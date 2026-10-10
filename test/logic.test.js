@@ -159,6 +159,33 @@ test('קישור לפרויקט "עירייה": מי שמופיע שם פטור,
   assert.strictEqual(s.counts.covered, 2);
 });
 
+test('קישור: כיתה שונה בכל רשימה - מתאים לפי שם, רק כשהשם יחיד בשני הפרויקטים', () => {
+  const mgr = L.newProject('רישום דרך המנהל', 'list');
+  mgr.people = [
+    { id: 'm1', firstName: 'רחל', lastName: 'כהן', cls: 'ג' },
+    { id: 'm2', firstName: 'לאה', lastName: 'לוי', cls: 'א' },
+    { id: 'm3', firstName: 'לאה', lastName: 'לוי', cls: 'ב' },
+    { id: 'm4', firstName: 'שרה', lastName: 'גרין', cls: 'א' },
+  ];
+  const camp = L.newProject('קייטנה', 'camp');
+  camp.pricing = { mode: 'flat', flat: 170, groups: {} };
+  camp.people = [
+    { id: 'a', firstName: 'רחל', lastName: 'כהן', cls: 'ד' },
+    { id: 'b', firstName: 'לאה', lastName: 'לוי', cls: 'ג' },
+    { id: 'c', firstName: 'שרה', lastName: 'גרין', cls: 'ב' },
+    { id: 'd', firstName: 'שרה', lastName: 'גרין', cls: 'ג' },
+  ];
+  for (const p of camp.people) L.ensureEnrollment(camp, p.id).registered = true;
+  camp.links = [{ id: 'l', projectId: mgr.id, label: 'מנהל', condition: 'listed', cover: 'full' }];
+  L.setProjects([mgr, camp]);
+  const due = (id) => L.amountDue(camp, camp.people.find((p) => p.id === id));
+  assert.strictEqual(due('a'), 0, 'שם יחיד בשני הצדדים - אותה ילדה גם בכיתה אחרת');
+  assert.strictEqual(due('b'), 170, 'שתי לאה לוי אצל המנהל - לא מנחשים');
+  assert.strictEqual(due('c'), 170, 'שתי שרה גרין בקייטנה - לא מנחשים');
+  assert.strictEqual(due('d'), 170);
+  L.setProjects([]);
+});
+
 test('קישור עם תנאי "שילם שם" והנחה קבועה במקום פטור מלא', () => {
   const mgr = L.newProject('רישום דרך המנהל', 'camp');
   mgr.pricing = { mode: 'flat', flat: 50, groups: {} };
