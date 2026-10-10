@@ -53,6 +53,16 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           V="${{ needs.check.outputs.version }}"
+          cat > release-notes.md <<EOF
+          ## גרסה $V - מה להוריד?
+
+          **התקנה (מומלץ לרוב האנשים):** מורידים את \`camp-manager-setup-$V.exe\` ופותחים. התוכנה מותקנת במחשב, נוצר קיצור דרך בשולחן העבודה, והיא מתעדכנת לבד.
+
+          **גרסה ניידת (בלי התקנה, למשל מדיסק-און-קי):** מורידים את \`camp-manager-fast-portable-$V.zip\`, לחיצה ימנית ← חילוץ הכול, ופותחים את \`camp-manager.exe\` מתוך התיקייה. הנתונים נשמרים בתיקייה "נתוני ניהול קייטנות" שבתוכה, ועוברים איתה.
+
+          שאר הקבצים בעמוד (\`blockmap\`, \`latest.yml\`, \`app-update.json\`, \`asar.gz\`, וגם \`portable\` שהוא בקובץ אחד ואיטי) הם קבצים פנימיים לעדכון אוטומטי, ואין צורך להוריד אותם.
+          EOF
+          sed -i 's/^          //' release-notes.md
           gh release create "v$V" dist/*.exe dist/*.blockmap dist/latest.yml \
             "dist/camp-manager-fast-portable-$V.zip" dist/update-assets/* \
-            --title "$V" --target "$GITHUB_SHA" --notes "גרסה $V - מתעדכנת לבד בתוכנות המותקנות. הגרסה הניידת המהירה: קובץ ה-zip (לפרוס לתיקייה ולהפעיל את camp-manager.exe)."
+            --title "$V" --target "$GITHUB_SHA" --notes-file release-notes.md
