@@ -186,6 +186,15 @@ test('קישור: כיתה שונה בכל רשימה - מתאים לפי שם, 
   L.setProjects([]);
 });
 
+test('סיכום סופי: כמה התקבל בפועל מהמנהל וכמה חסר', () => {
+  const s = { paid: 0, covered: 900, coveredBy: { 'מנהל': { count: 9, amount: 900 }, 'עירייה': { count: 2, amount: 340 } }, expenses: 0, balance: 0 };
+  const pr = { links: [{ projectId: 'x', label: 'מנהל', received: 600 }, { projectId: 'y', label: 'עירייה', received: '' }] };
+  const f = L.finalSummary(pr, s);
+  assert.deepStrictEqual(f.bySource[0], { label: 'מנהל', count: 9, amount: 900, received: 600, missing: 300 });
+  assert.strictEqual(f.bySource[1].received, undefined, 'לא סומן - לא מציגים');
+  assert.strictEqual(f.income, 900, 'ההכנסה הצפויה לא משתנה');
+});
+
 test('קישור עם תנאי "שילם שם" והנחה קבועה במקום פטור מלא', () => {
   const mgr = L.newProject('רישום דרך המנהל', 'camp');
   mgr.pricing = { mode: 'flat', flat: 50, groups: {} };

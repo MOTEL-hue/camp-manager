@@ -59,7 +59,7 @@
       people: [],
       columns: [],
       hiddenFields: [],
-      links: [], // [{id, projectId, label, condition, cover: 'full'|'amount', amount}]
+      links: [], // [{id, projectId, label, condition, cover: 'full'|'amount', amount, received}]
       reminders: [], // יומן תזכורות: [{date, channel, sent, failed}]
       // מחיר הרישום: none (אין), flat (שווה לכולם), group (לפי כיתה/קבוצה)
       pricing: { mode: kind === 'camp' || !kind ? 'flat' : 'none', flat: 0, groups: {} },
@@ -448,7 +448,19 @@
   function finalSummary(project, s) {
     const fromPeople = round2(s.paid);
     const fromSources = round2(s.covered);
-    const bySource = Object.entries(s.coveredBy || {}).map(([label, v]) => ({ label, count: v.count, amount: v.amount }));
+    // כמה התקבל בפועל מכל גורם (link.received, מסומן ידנית). null = עוד לא סומן.
+    const got = {};
+    for (const link of project.links || []) {
+      if (link.received === undefined || link.received === null || link.received === '') continue;
+      const src = ALL.find((x) => x.id === link.projectId);
+      const label = link.label || (src ? src.name : '');
+      got[label] = round2((got[label] || 0) + num(link.received));
+    }
+    const bySource = Object.entries(s.coveredBy || {}).map(([label, v]) => {
+      const x = { label, count: v.count, amount: v.amount };
+      if (label in got) { x.received = got[label]; x.missing = round2(v.amount - got[label]); }
+      return x;
+    });
     const income = round2(fromPeople + fromSources);
     const net = round2(income - s.expenses);
     return {

@@ -411,7 +411,10 @@
   // ---------- סיכום סופי: כל ההכנסות, כולל מה שמגיע מהמנהל / גורמים מקושרים ----------
   function finalRows(f) {
     const rows = [['שולם על ידי המשתתפים', f.fromPeople]];
-    for (const x of f.bySource) rows.push([`${x.label} (${x.count} משתתפים)`, x.amount]);
+    for (const x of f.bySource) {
+      rows.push([`${x.label} (${x.count} משתתפים)`, x.amount]);
+      if (x.received !== undefined) rows.push([`  ↳ התקבל בפועל מ${x.label}` + (x.missing > 0 ? ` (חסר ${L.money(x.missing)})` : ''), x.received]);
+    }
     return rows;
   }
 
@@ -586,7 +589,7 @@
     // קישור לפרויקטים אחרים
     const others = db.projects.filter((x) => x !== pr);
     const linksCard = el('div', { class: 'card', style: { marginBottom: '14px' } }, el('h3', null, '🔗 קישור לפרויקטים אחרים (פטור / מימון)'),
-      el('p', { class: 'muted small' }, 'למשל: מי שרשום/ה בפרויקט "רישום דרך העירייה" או "רישום דרך המנהל" לא משלם/ת כאן, או מקבל/ת הנחה. ההתאמה לפי שם פרטי, שם משפחה וכיתה (ואם אין כיתה באחת הרשימות - לפי שם מלא).'));
+      el('p', { class: 'muted small' }, 'למשל: מי שרשום/ה בפרויקט "רישום דרך העירייה" או "רישום דרך המנהל" לא משלם/ת כאן, או מקבל/ת הנחה. ההתאמה לפי שם פרטי, שם משפחה וכיתה (ואם הכיתה שונה או חסרה - לפי שם מלא, כשהוא יחיד בשתי הרשימות). ב"התקבל בפועל" רושמים כמה כסף כבר הגיע מהגורם.'));
     if (!others.length) linksCard.appendChild(el('p', { class: 'muted' }, 'צריך קודם ליצור פרויקט נוסף (למשל מסוג "רשימה בלבד") ולהכניס אליו את הרשימה.'));
     for (const link of pr.links) {
       const src = db.projects.find((x) => x.id === link.projectId);
@@ -602,6 +605,9 @@
         amount,
         el('span', null, 'כיתוב:'),
         el('input', { type: 'text', value: link.label || '', placeholder: 'למשל: עירייה', style: { width: '130px' }, onchange: (e) => { link.label = e.target.value.trim(); Store.commit(); } }),
+        el('span', null, 'התקבל בפועל:'),
+        el('input', { type: 'number', min: 0, step: 'any', value: link.received ?? '', placeholder: 'סכום', title: 'כמה כסף כבר הגיע מהגורם הזה (למשל מהמנהל)', style: { width: '100px' },
+          onchange: (e) => { link.received = e.target.value === '' ? '' : L.num(e.target.value); App.changed(); } }),
         el('button', { class: 'btn small danger', onclick: () => { pr.links = pr.links.filter((y) => y !== link); App.changed(); } }, 'הסר')));
     }
     if (others.length) {
