@@ -70,6 +70,14 @@ function saveDb(data) {
   return true;
 }
 
+// רישום תקלות מקומי בלבד: בלי תוכן משתמש, נתיבים אישיים או שליחה לרשת.
+function logAppError(kind, detail) {
+  const safe = String(detail || "").replace(/https?:\/\/\S+/g, "[כתובת]")
+    .replace(/(token|secret|password|authorization|cookie)=([^&\s]+)/ig, "$1=[הוסתר]")
+    .slice(0, 240);
+  console.error(JSON.stringify({ מערכת: "ניהול קייטנות ומכירות", סוג: kind, פרטים: safe, זמן: new Date().toISOString() }));
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1400,
@@ -87,7 +95,15 @@ function createWindow() {
     },
   });
   win.removeMenu();
-  win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  win.webContents.on('render-process-gone', (_event, details) => {
+    logAppError("תהליך הממשק הופסק", details && details.reason ? details.reason : "לא ידועה הסיבה");
+  });
+  win.webContents.on('did-fail-load', (_event, code, description) => {
+    if (code !== -3) logAppError("טעינת ממשק נכשלה", description || String(code));
+  });
+  win.loadFile(path.join(__dirname, 'renderer', 'index.html')).catch((error) => {
+    logAppError("פתיחת חלון נכשלה", error && error.message);
+  });
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^(https?|mailto|tel):/.test(url)) shell.openExternal(url);
     return { action: 'deny' };
